@@ -1490,6 +1490,13 @@ class ServerSettings extends StatelessWidget {
                         style: const TextStyle(color: red, fontSize: 13),
                       ),
                     ],
+                    if ((status['warning'] as String? ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        status['warning'] as String,
+                        style: const TextStyle(color: orange, fontSize: 13),
+                      ),
+                    ],
                     if (status['configured'] == true &&
                         status['connected'] != true) ...[
                       const SizedBox(height: 16),

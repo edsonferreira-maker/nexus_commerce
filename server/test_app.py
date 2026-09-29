@@ -45,6 +45,14 @@ class TrafficStoreTest(unittest.TestCase):
             self.assertEqual(len(snapshot['hourlyViews']), 24)
             self.assertEqual(store.live(now=1400)['activeVisitors'], 0)
 
+    def test_saves_temporary_mercado_livre_token_without_refresh_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TrafficStore(Path(directory) / 'traffic.sqlite3')
+            store.save_token({'access_token': 'temporary', 'expires_in': 21600})
+            stored = store.get_token()
+            self.assertEqual(stored['access_token'], 'temporary')
+            self.assertEqual(stored['refresh_token'], '')
+
 
 class NexoHttpTest(unittest.TestCase):
     def setUp(self):
@@ -189,6 +197,22 @@ class NexoHttpTest(unittest.TestCase):
             )
         self.assertEqual(failure.exception.code, 400)
         self.assertIn('Não foi possível conectar', failure.exception.read().decode())
+
+    def test_oauth_callback_accepts_access_token_without_refresh_token(self):
+        state = self.server.create_ml_oauth_state()
+        token = {'access_token': 'temporary', 'expires_in': 21600}
+        with patch.dict(os.environ, {
+            'ML_CLIENT_ID': 'client',
+            'ML_CLIENT_SECRET': 'secret',
+            'ML_REDIRECT_URI': self.url + '/api/mercadolivre/callback',
+        }), patch('app.exchange_code', return_value=token):
+            with self.request(
+                '/api/mercadolivre/callback?'
+                + urllib.parse.urlencode({'state': state, 'code': 'authorization-code'})
+            ) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn('Conta conectada', response.read().decode())
+        self.assertEqual(self.server.store.get_token()['refresh_token'], '')
 
     def test_rejects_other_origin_and_other_pages(self):
         payload = json.dumps({'page': PUBLISHED_PAGE, 'kind': 'view'}).encode()

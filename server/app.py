@@ -275,12 +275,22 @@ class TrafficStore:
         return [json.loads(row[0]) for row in rows]
 
     def save_token(self, payload: dict):
+        access_token = payload.get('access_token')
+        refresh_value = payload.get('refresh_token') or ''
+        try:
+            expires_in = int(payload.get('expires_in') or 0)
+        except (TypeError, ValueError):
+            expires_in = 0
+        if not isinstance(access_token, str) or not access_token or expires_in <= 0:
+            raise MercadoLivreError('O Mercado Livre retornou um token incompleto. Conecte a conta novamente.')
+        if not isinstance(refresh_value, str):
+            refresh_value = ''
         with self.connect() as db:
             db.execute(
                 """INSERT INTO integrations (name, access_token, refresh_token, expires_at) VALUES ('mercadolivre', ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET access_token=excluded.access_token,
                     refresh_token=excluded.refresh_token, expires_at=excluded.expires_at""",
-                (payload['access_token'], payload['refresh_token'], int(time.time()) + int(payload['expires_in'])),
+                (access_token, refresh_value, int(time.time()) + expires_in),
             )
 
     def get_token(self) -> dict | None:
@@ -492,6 +502,11 @@ class NexoServer(ThreadingHTTPServer):
         if not stored:
             raise MercadoLivreError('Conecte sua conta do Mercado Livre antes de importar.')
         if stored['expires_at'] <= time.time() + 60:
+            if not stored['refresh_token']:
+                raise MercadoLivreError(
+                    'O acesso temporário do Mercado Livre expirou. Ative a permissão offline_access '
+                    'no aplicativo e conecte a conta novamente.'
+                )
             updated = refresh_token(
                 os.environ['ML_CLIENT_ID'], os.environ['ML_CLIENT_SECRET'], stored['refresh_token']
             )
@@ -542,9 +557,16 @@ class NexoHandler(BaseHTTPRequestHandler):
         if path == '/api/mercadolivre/status':
             if not self.authorized():
                 return self.require_auth()
+            token = self.server.store.get_token()
             return self.send_json({
                 'configured': self.server.ml_configured,
-                'connected': self.server.store.get_token() is not None,
+                'connected': token is not None,
+                'refreshable': bool(token and token.get('refresh_token')),
+                'warning': (
+                    'Conta conectada com acesso temporário. Ative a permissão offline_access '
+                    'no aplicativo do Mercado Livre para renovar o acesso automaticamente.'
+                    if token and not token.get('refresh_token') else ''
+                ),
                 'error': self.server.ml_last_error,
             })
         if path == '/api/mercadolivre/connect':
