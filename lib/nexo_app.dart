@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import 'product_browser_capture.dart';
 import 'traffic_map.dart';
 
 const ink = Color(0xFF08111F);
@@ -3468,10 +3469,15 @@ class _ImportDialogState extends State<ImportDialog> {
         importError = null;
       });
       try {
+        final sourceUrl = controller.text.trim();
+        final capturedHtml = await captureProductHtml(sourceUrl);
         final response = await http.post(
           Uri.base.resolve('/api/products/import'),
           headers: const {'Content-Type': 'application/json'},
-          body: jsonEncode({'url': controller.text.trim()}),
+          body: jsonEncode({
+            'url': sourceUrl,
+            if (capturedHtml != null) 'html': capturedHtml,
+          }),
         );
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         if (response.statusCode != 200) {

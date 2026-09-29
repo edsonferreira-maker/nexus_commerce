@@ -1,0 +1,12 @@
+NEXO COMMERCE - CAPTURA AUTOMATICA DO MERCADO LIVRE
+
+1. Descompacte este arquivo em uma pasta permanente.
+2. No Google Chrome, abra: chrome://extensions
+3. Ative o "Modo do desenvolvedor" no canto superior direito.
+4. Clique em "Carregar sem compactacao".
+5. Escolha a pasta que contem manifest.json.
+6. Recarregue https://nexus-commerce-1n5m.onrender.com
+
+Depois disso, basta estar logado no Mercado Livre e colar o link na Nexo.
+A captura usa a sua sessao do navegador e acontece automaticamente durante o loading.
+Nao e necessario abrir o F12, copiar HTML ou manter uma caixa de texto na tela.
