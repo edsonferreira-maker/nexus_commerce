@@ -17,6 +17,34 @@ void main() {
     expect(find.text('Seus produtos'), findsOneWidget);
   });
 
+  testWidgets('login próprio mostra a identidade da Nexo', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(home: LoginScreen(onAuthenticated: () {})),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bem-vindo de volta'), findsOneWidget);
+    expect(find.text('PAINEL ADMINISTRATIVO'), findsOneWidget);
+    expect(find.text('Entrar no painel'), findsOneWidget);
+    expect(find.textContaining('Sua operação conectada'), findsOneWidget);
+    expect(find.byType(TextFormField), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpWidget(
+      MaterialApp(home: LoginScreen(onAuthenticated: () {})),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Bem-vindo de volta'), findsOneWidget);
+    expect(find.text('NEXO'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('mostra a página completa antes de publicar', (tester) async {
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1;

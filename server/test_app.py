@@ -87,6 +87,39 @@ class NexoHttpTest(unittest.TestCase):
         self.assertEqual(snapshot['activeVisitors'], 1)
         self.assertEqual(snapshot['cities'][0]['city'], 'São Paulo')
 
+    def test_custom_login_creates_and_removes_admin_session(self):
+        with self.request('/') as response:
+            self.assertEqual(response.status, 200)
+
+        invalid = json.dumps({'username': 'admin', 'password': 'wrong'}).encode()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request(
+                '/api/auth/login', invalid,
+                {'Content-Type': 'application/json'},
+            )
+        self.assertEqual(failure.exception.code, 401)
+
+        credentials = json.dumps({'username': 'admin', 'password': 'secret'}).encode()
+        with self.request(
+            '/api/auth/login', credentials,
+            {'Content-Type': 'application/json'},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            cookie = response.headers['Set-Cookie'].split(';', 1)[0]
+            self.assertTrue(json.load(response)['authenticated'])
+
+        with self.request('/api/auth/session', headers={'Cookie': cookie}) as response:
+            self.assertEqual(json.load(response)['user'], 'admin')
+
+        with self.request(
+            '/api/auth/logout', b'{}',
+            {'Content-Type': 'application/json', 'Cookie': cookie},
+        ) as response:
+            self.assertEqual(response.status, 200)
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request('/api/auth/session', headers={'Cookie': cookie})
+        self.assertEqual(failure.exception.code, 401)
+
     def test_rejects_other_origin_and_other_pages(self):
         payload = json.dumps({'page': PUBLISHED_PAGE, 'kind': 'view'}).encode()
         with self.assertRaises(urllib.error.HTTPError) as failure:

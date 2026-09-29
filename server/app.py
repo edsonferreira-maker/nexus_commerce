@@ -70,6 +70,8 @@ def import_public_product(source_url: str, supplied_html: str | None = None) -> 
 
 
 SESSION_RE = re.compile(r"^[a-f0-9]{32}$")
+ADMIN_SESSION_RE = re.compile(r"^[a-f0-9]{64}$")
+ADMIN_SESSION_SECONDS = 12 * 60 * 60
 PRODUCT_SLUG_RE = re.compile(r'(?:mlb[0-9]{7,15}|p-[a-f0-9]{16})')
 PRODUCT_ID_RE = re.compile(r'(?:MLB[0-9]{7,15}|SRC[A-F0-9]{16})')
 MIME = {
@@ -381,8 +383,36 @@ class NexoServer(ThreadingHTTPServer):
         self.geo = geo_locator or GeoLocator(data_root / "dbip-city-lite.mmdb")
         self.admin_user = user
         self.admin_password = password
+        self.admin_sessions: dict[str, float] = {}
+        self.admin_sessions_lock = threading.Lock()
         self.trust_proxy = trust_proxy
         super().__init__(address, NexoHandler)
+
+    def create_admin_session(self) -> str:
+        token = secrets.token_hex(32)
+        now = time.time()
+        with self.admin_sessions_lock:
+            self.admin_sessions = {
+                key: expiry for key, expiry in self.admin_sessions.items()
+                if expiry > now
+            }
+            self.admin_sessions[token] = now + ADMIN_SESSION_SECONDS
+        return token
+
+    def has_admin_session(self, token: str) -> bool:
+        if not ADMIN_SESSION_RE.fullmatch(token):
+            return False
+        now = time.time()
+        with self.admin_sessions_lock:
+            expiry = self.admin_sessions.get(token, 0)
+            if expiry <= now:
+                self.admin_sessions.pop(token, None)
+                return False
+            return True
+
+    def delete_admin_session(self, token: str):
+        with self.admin_sessions_lock:
+            self.admin_sessions.pop(token, None)
 
     @property
     def ml_configured(self) -> bool:
@@ -438,6 +468,10 @@ class NexoHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/health":
             return self.send_json({"ok": True, "geoipReady": self.server.geo.ready})
+        if path == '/api/auth/session':
+            if not self.authorized():
+                return self.send_json_error('Sessão não autenticada.', HTTPStatus.UNAUTHORIZED)
+            return self.send_json({'authenticated': True, 'user': self.server.admin_user})
         if path == '/api/mercadolivre/status':
             if not self.authorized():
                 return self.require_auth()
@@ -498,8 +532,6 @@ class NexoHandler(BaseHTTPRequestHandler):
             if not re.fullmatch(r'(?:mlb[0-9]{7,15}-[0-9]+|upload-[a-f0-9]{32})\.(jpg|png|webp)', name):
                 return self.send_error(HTTPStatus.NOT_FOUND)
             return self.serve_file(self.server.media_root / name)
-        if path in ("/", "/index.html") and not self.authorized():
-            return self.require_auth()
         if path.startswith('/p/'):
             slug = path[3:]
             if self.server.store.get_product(slug) is None:
@@ -526,7 +558,7 @@ class NexoHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
-        public_paths = ('/api/traffic/event', '/api/mercadolivre/notify')
+        public_paths = ('/api/traffic/event', '/api/mercadolivre/notify', '/api/auth/login', '/api/auth/logout')
         if path not in (*public_paths, '/api/products/import', '/api/products/publish', '/api/media/upload'):
             return self.send_error(HTTPStatus.NOT_FOUND)
         if path not in public_paths and not self.authorized():
@@ -562,6 +594,40 @@ class NexoHandler(BaseHTTPRequestHandler):
             return self.send_error(HTTPStatus.BAD_REQUEST)
         if not isinstance(body, dict):
             return self.send_error(HTTPStatus.BAD_REQUEST)
+        if path == '/api/auth/login':
+            username = body.get('username')
+            password = body.get('password')
+            valid_user = isinstance(username, str) and hmac.compare_digest(username, self.server.admin_user)
+            valid_password = isinstance(password, str) and hmac.compare_digest(password, self.server.admin_password)
+            if not (valid_user and valid_password):
+                return self.send_json_error('Usuário ou senha incorretos.', HTTPStatus.UNAUTHORIZED)
+            token = self.server.create_admin_session()
+            secure = '; Secure' if self.forwarded_proto() == 'https' else ''
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header(
+                'Set-Cookie',
+                f'nexo_admin={token}; Path=/; Max-Age={ADMIN_SESSION_SECONDS}; HttpOnly; SameSite=Strict{secure}',
+            )
+            data = json.dumps({'authenticated': True, 'user': self.server.admin_user}).encode('utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path == '/api/auth/logout':
+            token = self.admin_session_token()
+            if token:
+                self.server.delete_admin_session(token)
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Set-Cookie', 'nexo_admin=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+            data = b'{"ok": true}'
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == '/api/mercadolivre/notify':
             expected_app = os.environ.get('ML_CLIENT_ID', '')
             received_app = str(body.get('application_id') or '')
@@ -686,6 +752,9 @@ class NexoHandler(BaseHTTPRequestHandler):
         return self.headers.get("X-Forwarded-Proto", "").lower() if self.server.trust_proxy else ""
 
     def authorized(self) -> bool:
+        token = self.admin_session_token()
+        if token and self.server.has_admin_session(token):
+            return True
         value = self.headers.get("Authorization", "")
         if not value.startswith("Basic "):
             return False
@@ -696,11 +765,17 @@ class NexoHandler(BaseHTTPRequestHandler):
         expected = f"{self.server.admin_user}:{self.server.admin_password}"
         return hmac.compare_digest(decoded, expected)
 
+    def admin_session_token(self) -> str:
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get('Cookie', ''))
+        except Exception:
+            return ''
+        supplied = cookie.get('nexo_admin')
+        return supplied.value if supplied else ''
+
     def require_auth(self):
-        self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("WWW-Authenticate", 'Basic realm="Nexo Analytics"')
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
+        self.send_json_error('Faça login para continuar.', HTTPStatus.UNAUTHORIZED)
 
     def redirect(self, location: str):
         self.send_response(HTTPStatus.FOUND)

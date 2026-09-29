@@ -64,6 +64,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/maps/brasil_uf_ibge.svg
+    - assets/branding/nexo-commerce-logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

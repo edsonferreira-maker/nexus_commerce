@@ -81,7 +81,9 @@ def open_browser_when_ready():
             time.sleep(0.5)
     else:
         return
-    print(f'Abra {url} no navegador (usuário: admin; senha local: local-dev).', flush=True)
+    user = os.environ.get('NEXO_ADMIN_USER', 'admin')
+    password = os.environ.get('NEXO_ADMIN_PASSWORD', 'local-dev')
+    print(f'Abra {url} no navegador (usuário: {user}; senha local: {password}).', flush=True)
     if os.environ.get('NEXO_OPEN_BROWSER', '1') == '0':
         return
     if sys.platform == 'darwin':

@@ -94,9 +94,544 @@ class NexoApp extends StatelessWidget {
       }
       return MaterialPageRoute<void>(
         settings: settings,
-        builder: (_) => const CommerceShell(),
+        builder: (_) => selfHosted ? const AuthGate() : const CommerceShell(),
       );
     },
+  );
+}
+
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool? authenticated;
+
+  @override
+  void initState() {
+    super.initState();
+    checkSession();
+  }
+
+  Future<void> checkSession() async {
+    try {
+      final response = await http.get(Uri.base.resolve('/api/auth/session'));
+      if (mounted) setState(() => authenticated = response.statusCode == 200);
+    } catch (_) {
+      if (mounted) setState(() => authenticated = false);
+    }
+  }
+
+  Future<void> logout() async {
+    try {
+      await http.post(
+        Uri.base.resolve('/api/auth/logout'),
+        headers: const {'Content-Type': 'application/json'},
+        body: '{}',
+      );
+    } finally {
+      if (mounted) setState(() => authenticated = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (authenticated == null) return const LoginLoadingScreen();
+    if (authenticated == false) {
+      return LoginScreen(
+        onAuthenticated: () => setState(() => authenticated = true),
+      );
+    }
+    return CommerceShell(onLogout: logout);
+  }
+}
+
+class LoginLoadingScreen extends StatelessWidget {
+  const LoginLoadingScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+    body: Center(
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: CircularProgressIndicator(strokeWidth: 2.5),
+      ),
+    ),
+  );
+}
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({required this.onAuthenticated, super.key});
+
+  final VoidCallback onAuthenticated;
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final username = TextEditingController();
+  final password = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  bool obscurePassword = true;
+  bool submitting = false;
+  String? error;
+
+  @override
+  void dispose() {
+    username.dispose();
+    password.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    if (submitting || !(formKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      submitting = true;
+      error = null;
+    });
+    try {
+      final response = await http.post(
+        Uri.base.resolve('/api/auth/login'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': username.text.trim(),
+          'password': password.text,
+        }),
+      );
+      if (response.statusCode == 200) {
+        widget.onAuthenticated();
+        return;
+      }
+      var message = 'Usuário ou senha incorretos.';
+      try {
+        message =
+            (jsonDecode(response.body) as Map<String, dynamic>)['message']
+                as String? ??
+            message;
+      } catch (_) {}
+      if (mounted) setState(() => error = message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => error = 'Não foi possível acessar o servidor. Tente novamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final desktop = size.width >= 900;
+    return Scaffold(
+      body: Stack(
+        children: [
+          const Positioned.fill(child: _LoginBackdrop()),
+          SafeArea(
+            child: Row(
+              children: [
+                if (desktop)
+                  const Expanded(flex: 11, child: _LoginBrandPanel()),
+                Expanded(
+                  flex: desktop ? 9 : 1,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: desktop ? 64 : 22,
+                        vertical: 32,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 430),
+                        child: _loginCard(desktop),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _loginCard(bool desktop) => Container(
+    padding: EdgeInsets.all(desktop ? 38 : 26),
+    decoration: BoxDecoration(
+      color: const Color(0xF2121E31),
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: Colors.white.withValues(alpha: .09)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x66000000),
+          blurRadius: 60,
+          offset: Offset(0, 24),
+        ),
+      ],
+    ),
+    child: Form(
+      key: formKey,
+      child: AutofillGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!desktop) ...[
+              const _CompactLoginBrand(),
+              const SizedBox(height: 32),
+            ],
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+              decoration: BoxDecoration(
+                color: green.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: green.withValues(alpha: .22)),
+              ),
+              child: const Text(
+                'PAINEL ADMINISTRATIVO',
+                style: TextStyle(
+                  color: green,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Bem-vindo de volta',
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -1,
+              ),
+            ),
+            const SizedBox(height: 9),
+            const Text(
+              'Entre para acompanhar sua operação e gerenciar seus produtos.',
+              style: TextStyle(color: muted, height: 1.5),
+            ),
+            const SizedBox(height: 30),
+            const Text(
+              'Usuário',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 9),
+            TextFormField(
+              controller: username,
+              autofillHints: const [AutofillHints.username],
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                hintText: 'Digite seu usuário',
+                prefixIcon: Icon(
+                  Icons.person_outline_rounded,
+                  color: muted,
+                  size: 20,
+                ),
+              ),
+              validator: (value) => (value?.trim().isEmpty ?? true)
+                  ? 'Informe seu usuário.'
+                  : null,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Senha',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 9),
+            TextFormField(
+              controller: password,
+              autofillHints: const [AutofillHints.password],
+              obscureText: obscurePassword,
+              onFieldSubmitted: (_) => submit(),
+              decoration: InputDecoration(
+                hintText: 'Digite sua senha',
+                prefixIcon: const Icon(
+                  Icons.lock_outline_rounded,
+                  color: muted,
+                  size: 20,
+                ),
+                suffixIcon: IconButton(
+                  tooltip: obscurePassword ? 'Mostrar senha' : 'Ocultar senha',
+                  onPressed: () =>
+                      setState(() => obscurePassword = !obscurePassword),
+                  icon: Icon(
+                    obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    color: muted,
+                    size: 20,
+                  ),
+                ),
+              ),
+              validator: (value) =>
+                  (value?.isEmpty ?? true) ? 'Informe sua senha.' : null,
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(13),
+                decoration: BoxDecoration(
+                  color: red.withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: red.withValues(alpha: .28)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: red,
+                      size: 19,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        error!,
+                        style: const TextStyle(color: red, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 26),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton(
+                onPressed: submitting ? null : submit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: green,
+                  foregroundColor: ink,
+                  disabledBackgroundColor: green.withValues(alpha: .5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: submitting
+                    ? const SizedBox(
+                        width: 21,
+                        height: 21,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.3,
+                          color: ink,
+                        ),
+                      )
+                    : const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Entrar no painel',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            SizedBox(width: 9),
+                            Icon(Icons.arrow_forward_rounded, size: 19),
+                          ],
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.shield_outlined, color: muted, size: 15),
+                SizedBox(width: 7),
+                Flexible(
+                  child: Text(
+                    'Acesso protegido e seguro',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: muted, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _CompactLoginBrand extends StatelessWidget {
+  const _CompactLoginBrand();
+
+  @override
+  Widget build(BuildContext context) => const Row(
+    children: [
+      _BrandMark(size: 48),
+      SizedBox(width: 13),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'NEXO',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.6,
+            ),
+          ),
+          Text(
+            'COMMERCE',
+            style: TextStyle(
+              color: muted,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2.2,
+            ),
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
+class _LoginBrandPanel extends StatelessWidget {
+  const _LoginBrandPanel();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(72, 54, 56, 54),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _CompactLoginBrand(),
+        const Spacer(),
+        const _BrandMark(size: 104),
+        const SizedBox(height: 34),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: const Text(
+            'Sua operação conectada. Seu crescimento em movimento.',
+            style: TextStyle(
+              fontSize: 46,
+              height: 1.08,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -1.8,
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: const Text(
+            'Produtos, pedidos e performance reunidos em um painel criado para decisões mais rápidas.',
+            style: TextStyle(
+              color: Color(0xFFADB8C9),
+              fontSize: 17,
+              height: 1.55,
+            ),
+          ),
+        ),
+        const Spacer(),
+        const Row(
+          children: [
+            _LoginFeature(Icons.bolt_rounded, 'Operação ágil'),
+            SizedBox(width: 26),
+            _LoginFeature(Icons.insights_rounded, 'Dados em tempo real'),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _BrandMark extends StatelessWidget {
+  const _BrandMark({required this.size});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(size * .24),
+    child: Image.asset(
+      'assets/branding/nexo-commerce-logo.png',
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+    ),
+  );
+}
+
+class _LoginFeature extends StatelessWidget {
+  const _LoginFeature(this.icon, this.label);
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: .06),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: green, size: 17),
+      ),
+      const SizedBox(width: 10),
+      Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFFC0C9D6),
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ],
+  );
+}
+
+class _LoginBackdrop extends StatelessWidget {
+  const _LoginBackdrop();
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF07101E), Color(0xFF0B1525), Color(0xFF10172A)],
+      ),
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          left: -180,
+          top: -210,
+          child: Container(
+            width: 560,
+            height: 560,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: purple.withValues(alpha: .1),
+            ),
+          ),
+        ),
+        Positioned(
+          right: -140,
+          bottom: -220,
+          child: Container(
+            width: 520,
+            height: 520,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: green.withValues(alpha: .07),
+            ),
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -354,7 +889,8 @@ const demoProductPage = ProductPageData(
 );
 
 class CommerceShell extends StatefulWidget {
-  const CommerceShell({super.key});
+  const CommerceShell({this.onLogout, super.key});
+  final VoidCallback? onLogout;
   @override
   State<CommerceShell> createState() => _CommerceShellState();
 }
@@ -439,6 +975,7 @@ class _CommerceShellState extends State<CommerceShell> {
                     compact: compact,
                     onImport: () => openImporter(context),
                     onPreview: () => openStore(context),
+                    onLogout: widget.onLogout,
                   ),
                   Expanded(
                     child: IndexedStack(index: selected, children: pages),
@@ -676,11 +1213,13 @@ class Topbar extends StatelessWidget {
     required this.compact,
     required this.onImport,
     required this.onPreview,
+    this.onLogout,
     super.key,
   });
   final String title;
   final bool compact;
   final VoidCallback onImport, onPreview;
+  final VoidCallback? onLogout;
   @override
   Widget build(BuildContext context) => Container(
     height: 76,
@@ -726,14 +1265,47 @@ class Topbar extends StatelessWidget {
             ),
           ),
         const SizedBox(width: 8),
-        CircleAvatar(
-          radius: 18,
-          backgroundColor: purple,
-          child: Text(
-            selfHosted ? 'A' : 'EF',
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+        if (selfHosted)
+          PopupMenuButton<String>(
+            tooltip: 'Conta',
+            onSelected: (value) {
+              if (value == 'logout') onLogout?.call();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Text('Administrador'),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded, size: 18),
+                    SizedBox(width: 10),
+                    Text('Sair'),
+                  ],
+                ),
+              ),
+            ],
+            child: const CircleAvatar(
+              radius: 18,
+              backgroundColor: purple,
+              child: Text(
+                'A',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+              ),
+            ),
+          )
+        else
+          const CircleAvatar(
+            radius: 18,
+            backgroundColor: purple,
+            child: Text(
+              'EF',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+            ),
           ),
-        ),
       ],
     ),
   );
