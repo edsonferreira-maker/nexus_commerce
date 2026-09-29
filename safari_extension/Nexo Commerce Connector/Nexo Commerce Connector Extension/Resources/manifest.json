@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Nexo Commerce - Captura Mercado Livre",
+  "version": "1.0.0",
+  "description": "Captura automaticamente os dados públicos do produto usando sua sessão do navegador.",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": [
+    "https://*.mercadolivre.com.br/*",
+    "https://mercadolivre.com.br/*",
+    "https://*.mercadolibre.com.br/*",
+    "https://mercadolibre.com.br/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://nexus-commerce-1n5m.onrender.com/*"],
+      "js": ["nexo-bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "Captura automática ativa para a Nexo Commerce"
+  }
+}

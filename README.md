@@ -36,6 +36,8 @@ Crie um aplicativo no [portal oficial de desenvolvedores](https://developers.mer
 
 Clique em **Conectar conta do Mercado Livre** e autorize o aplicativo para usar a API oficial. Para um link de catálogo `/p/MLB...`, o importador usa o anúncio selecionado no parâmetro `wid` quando ele pertence ao catálogo; caso contrário, usa a oferta disponível. A API fornece título, preço, estoque, fotos, descrição, variações e avaliações, e as fotos são copiadas para o volume quando possível. Sem a conexão, o sistema tenta a página pública e o DOM renderizado; se o Mercado Livre exigir verificação, a importação só continua com uma autorização válida ou com o HTML capturado no seu navegador.
 
+Para capturar a página usando uma sessão já autenticada no Safari, baixe `nexo-mercadolivre-safari.zip`, abra o projeto do Xcode incluído, execute o esquema **Nexo Commerce Connector** em **My Mac** e habilite a extensão em **Safari > Ajustes > Extensões**. O guia completo está em `safari_extension/INSTALAR-NO-SAFARI.md`.
+
 Ao publicar, o produto fica salvo no SQLite. Dados importados como preço, estoque e avaliações refletem o momento da importação; você pode editar preço e estoque na sua página ou importar novamente. A integração de pedidos e pagamentos ainda não está disponível. No modo de servidor, as telas de pedidos e configurações não mostram dados fictícios; os gráficos de faturamento pertencem somente ao modo de demonstração local.
 
 ## Tráfego em tempo real

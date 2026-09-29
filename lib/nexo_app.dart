@@ -3625,13 +3625,27 @@ class _ImportDialogState extends State<ImportDialog> {
           if (page.market == 'Mercado Livre' && page.images.isEmpty)
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => launchUrl(
-                  Uri.base.resolve('/nexo-mercadolivre-extension.zip'),
-                  mode: LaunchMode.platformDefault,
-                ),
-                icon: const Icon(Icons.extension_outlined, size: 18),
-                label: const Text('Baixar conector para capturar preço e fotos'),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => launchUrl(
+                      Uri.base.resolve('/nexo-mercadolivre-extension.zip'),
+                      mode: LaunchMode.platformDefault,
+                    ),
+                    icon: const Icon(Icons.extension_outlined, size: 18),
+                    label: const Text('Conector para Chrome ou Edge'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => launchUrl(
+                      Uri.base.resolve('/nexo-mercadolivre-safari.zip'),
+                      mode: LaunchMode.platformDefault,
+                    ),
+                    icon: const Icon(Icons.explore_outlined, size: 18),
+                    label: const Text('Conector para Safari (Xcode)'),
+                  ),
+                ],
               ),
             ),
           const SizedBox(height: 12),
