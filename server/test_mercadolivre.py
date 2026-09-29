@@ -10,6 +10,10 @@ class MercadoLivreTest(unittest.TestCase):
             item_id_from_url('https://www.mercadolivre.com.br/um-produto/p/MLB1234567890'),
             'MLB1234567890',
         )
+        self.assertEqual(
+            item_id_from_url('https://www.mercadolivre.com.br/capa/up/MLBU4195394312'),
+            'MLBU4195394312',
+        )
         with self.assertRaises(MercadoLivreError):
             item_id_from_url('https://evil.example/MLB1234567890')
         with self.assertRaises(MercadoLivreError):
@@ -59,6 +63,30 @@ class MercadoLivreTest(unittest.TestCase):
             product = fetch_product('MLB47535705', 'token', catalog=True, selected_item='MLB6167651244')
         self.assertEqual(product['id'], 'MLB6167651244')
         self.assertFalse(any('/products/' in url for url in urls))
+
+    def test_user_product_link_resolves_available_item(self):
+        urls = []
+        def api(url, _token):
+            urls.append(url)
+            if '/user-products/MLBU4195394312' in url:
+                return {'id': 'MLBU4195394312', 'user_id': 1234}
+            if '/users/1234/items/search' in url:
+                return {'results': ['MLB6068020650']}
+            if '/items/MLB6068020650/description' in url:
+                return {'plain_text': 'Descrição'}
+            if '/items/MLB6068020650' in url:
+                return {
+                    'id': 'MLB6068020650', 'status': 'active',
+                    'available_quantity': 5, 'title': 'Capa Samsung', 'price': 39.9,
+                    'permalink': 'https://produto.mercadolivre.com.br/MLB-6068020650',
+                    'pictures': [{'secure_url': 'https://http2.mlstatic.com/capa.jpg'}],
+                }
+            return {'reviews': []}
+        with patch('mercadolivre.request_json', side_effect=api):
+            product = fetch_product('MLBU4195394312', 'token')
+        self.assertEqual(product['id'], 'MLB6068020650')
+        self.assertEqual(product['name'], 'Capa Samsung')
+        self.assertTrue(any('user_product_id=MLBU4195394312' in url for url in urls))
 
     def test_preserves_real_photos_description_and_comments(self):
         product = product_from_api(

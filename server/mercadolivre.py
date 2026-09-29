@@ -12,6 +12,7 @@ from datetime import datetime
 
 API_ROOT = 'https://api.mercadolibre.com'
 ITEM_ID = re.compile(r'MLB[-_]?([0-9]{7,15})', re.IGNORECASE)
+USER_PRODUCT_ID = re.compile(r'MLBU[-_]?([0-9]{7,15})', re.IGNORECASE)
 
 
 class MercadoLivreError(Exception):
@@ -27,9 +28,12 @@ def item_id_from_url(value: str) -> str:
         or hostname == 'mercadolibre.com.br' or hostname.endswith('.mercadolibre.com.br')
     ):
         raise MercadoLivreError('Informe o link de um produto do Mercado Livre Brasil.')
+    match = USER_PRODUCT_ID.search(parsed.path.upper())
+    if match:
+        return 'MLBU' + match.group(1)
     match = ITEM_ID.search(parsed.path.upper())
     if not match:
-        raise MercadoLivreError('Não encontrei o código MLB no link informado.')
+        raise MercadoLivreError('Não encontrei o código MLB ou MLBU no link informado.')
     return 'MLB' + match.group(1)
 
 
@@ -81,6 +85,11 @@ def request_json(url: str, token: str | None = None, form: dict | None = None):
             raise MercadoLivreError('Produto não encontrado no Mercado Livre.') from error
         if error.code == 429:
             raise MercadoLivreError('O Mercado Livre limitou as consultas. Tente novamente em alguns minutos.') from error
+        if error.code == 403 and str(details.get('code') or '') == 'PA_UNAUTHORIZED_RESULT_FROM_POLICIES':
+            raise MercadoLivreError(
+                'A conta conectada não tem permissão para ler este anúncio. '
+                'Habilite a permissão de leitura no aplicativo do Mercado Livre e conecte novamente.'
+            ) from error
         if api_message and len(api_message) <= 240:
             raise MercadoLivreError(f'Mercado Livre: {api_message}') from error
         raise MercadoLivreError(f'Falha na API do Mercado Livre (HTTP {error.code}).') from error
@@ -188,9 +197,41 @@ def product_from_api(item: dict, description: dict, opinions: dict) -> dict:
     }
 
 
+def item_from_user_product(user_product_id: str, access_token: str) -> tuple[str, dict]:
+    user_product = request_json(f'{API_ROOT}/user-products/{user_product_id}', access_token)
+    seller_id = user_product.get('user_id')
+    if not isinstance(seller_id, int) and not (isinstance(seller_id, str) and seller_id.isdigit()):
+        raise MercadoLivreError('O Mercado Livre não informou o vendedor deste produto.')
+    search = request_json(
+        f'{API_ROOT}/users/{seller_id}/items/search?'
+        + urllib.parse.urlencode({'user_product_id': user_product_id}),
+        access_token,
+    )
+    candidates = [
+        value for value in search.get('results') or []
+        if isinstance(value, str) and ITEM_ID.fullmatch(value)
+    ]
+    if not candidates:
+        raise MercadoLivreError('Este produto MLBU não possui um anúncio disponível para importar.')
+    fallback = None
+    for candidate_id in candidates[:30]:
+        try:
+            candidate = request_json(f'{API_ROOT}/items/{candidate_id}', access_token)
+        except MercadoLivreError:
+            continue
+        fallback = fallback or (candidate_id, candidate)
+        if candidate.get('status') == 'active' and int(candidate.get('available_quantity') or 0) > 0:
+            return candidate_id, candidate
+    if fallback:
+        return fallback
+    raise MercadoLivreError('Não foi possível consultar os anúncios associados a este produto MLBU.')
+
+
 def fetch_product(item_id: str, access_token: str, catalog: bool = False, selected_item: str | None = None) -> dict:
     catalog_id = None
     item = None
+    if USER_PRODUCT_ID.fullmatch(item_id):
+        item_id, item = item_from_user_product(item_id, access_token)
     if catalog:
         catalog_id = item_id
         if selected_item:

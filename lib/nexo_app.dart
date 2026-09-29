@@ -3077,13 +3077,30 @@ class _ImportDialogState extends State<ImportDialog> {
   String? importError;
   int step = 0;
   bool redirect = false, loading = false, agreed = true;
+  bool? mercadoLivreConnected;
   @override
   void initState() {
     super.initState();
+    if (selfHosted) _loadMercadoLivreStatus();
     final initial = widget.initialPage;
     if (initial != null) {
       controller.text = initial.sourceUrl;
       setImportedPage(initial);
+    }
+  }
+
+  Future<void> _loadMercadoLivreStatus() async {
+    try {
+      final response = await http.get(
+        Uri.base.resolve('/api/mercadolivre/status'),
+      );
+      if (response.statusCode != 200) return;
+      final status = jsonDecode(response.body) as Map<String, dynamic>;
+      if (mounted) {
+        setState(() => mercadoLivreConnected = status['connected'] == true);
+      }
+    } catch (_) {
+      // A tela de configurações continua disponível caso o status falhe.
     }
   }
 
@@ -3376,7 +3393,7 @@ class _ImportDialogState extends State<ImportDialog> {
                 const MarketBadge('aliexpress', Color(0xFFFF5E68)),
               ],
             ),
-            if (selfHosted)
+            if (selfHosted && mercadoLivreConnected == false)
               TextButton.icon(
                 onPressed: () => launchUrl(
                   Uri.base.resolve('/api/mercadolivre/connect'),

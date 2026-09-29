@@ -567,7 +567,7 @@ class NexoHandler(BaseHTTPRequestHandler):
                     'no aplicativo do Mercado Livre para renovar o acesso automaticamente.'
                     if token and not token.get('refresh_token') else ''
                 ),
-                'error': self.server.ml_last_error,
+                'error': '' if token else self.server.ml_last_error,
             })
         if path == '/api/mercadolivre/connect':
             if not self.authorized():
@@ -793,6 +793,7 @@ class NexoHandler(BaseHTTPRequestHandler):
                             catalog=is_catalog_product_url(source_url),
                             selected_item=selected_item_from_url(source_url),
                         )
+                        product['sourceUrl'] = source_url
                         self.server.cache_images(product)
                     except MercadoLivreError as api_error:
                         try:
