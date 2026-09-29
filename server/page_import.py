@@ -397,6 +397,53 @@ def blank_product(url: str, notice: str = '') -> dict:
     }
 
 
+def mercado_livre_link_fallback(url: str) -> dict:
+    """Build a useful draft from a Mercado Livre permalink when its anti-bot page wins.
+
+    Mercado Livre keeps the human-readable product title in all supported permalink
+    formats. This is deliberately a last resort: it never invents a price, photo, or
+    stock value, but it lets the editor open instead of turning a temporary crawler
+    block into a dead end.
+    """
+    market, _ = market_for_url(url)
+    if market != 'mercadolivre':
+        raise ImportErrorMessage('O fallback pelo link só é compatível com o Mercado Livre.')
+    parsed = urllib.parse.urlsplit(url.strip())
+    segments = [urllib.parse.unquote(value) for value in parsed.path.split('/') if value]
+    slug = ''
+    for index, segment in enumerate(segments):
+        if re.fullmatch(r'MLBU[-_]?\d{7,15}', segment, re.IGNORECASE):
+            if index:
+                previous = index - 2 if segments[index - 1].lower() == 'up' and index >= 2 else index - 1
+                slug = segments[previous]
+            break
+        item = re.match(r'MLB[-_]?\d{7,15}-(.+?)(?:-_JM)?$', segment, re.IGNORECASE)
+        if item:
+            slug = item.group(1)
+            break
+        if re.fullmatch(r'MLB[-_]?\d{7,15}', segment, re.IGNORECASE) and index:
+            slug = segments[index - 1]
+            break
+    title = ' '.join(part for part in re.split(r'[-_]+', slug) if part).strip()
+    if not title:
+        raise ImportErrorMessage('Não encontrei o título do produto no link informado.')
+    title = title[:1].upper() + title[1:]
+    title = re.sub(r'\biphone\b', 'iPhone', title, flags=re.IGNORECASE)
+    title = re.sub(r'\bmagsafe\b', 'MagSafe', title, flags=re.IGNORECASE)
+    draft = blank_product(url)
+    draft.update({
+        'name': title[:200],
+        'description': (
+            f'{title}. Confira preço, fotos e detalhes no anúncio original do Mercado Livre.'
+        )[:10000],
+        'importNotice': (
+            'O Mercado Livre bloqueou a leitura automática de preço e fotos. '
+            'O título foi recuperado do próprio link; complete os campos destacados antes de publicar.'
+        ),
+    })
+    return draft
+
+
 def extract_product(url: str, html: str) -> dict:
     draft = blank_product(url)
     market = draft['market']

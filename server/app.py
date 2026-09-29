@@ -35,7 +35,14 @@ from mercadolivre import (
     selected_item_from_url,
     refresh_token,
 )
-from page_import import ImportErrorMessage, extract_product, fetch_html, fetch_rendered_html, market_for_url
+from page_import import (
+    ImportErrorMessage,
+    extract_product,
+    fetch_html,
+    fetch_rendered_html,
+    mercado_livre_link_fallback,
+    market_for_url,
+)
 
 try:
     import maxminddb
@@ -795,13 +802,11 @@ class NexoHandler(BaseHTTPRequestHandler):
                         )
                         product['sourceUrl'] = source_url
                         self.server.cache_images(product)
-                    except MercadoLivreError as api_error:
+                    except MercadoLivreError:
                         try:
                             product = import_public_product(source_url)
-                        except ImportErrorMessage as browser_error:
-                            raise MercadoLivreError(
-                                f'{api_error} A leitura pública também falhou: {browser_error}'
-                            ) from browser_error
+                        except ImportErrorMessage:
+                            product = mercado_livre_link_fallback(source_url)
                 else:
                     product = import_public_product(source_url)
                 self.server.store.save_draft(product)

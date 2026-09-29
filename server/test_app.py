@@ -389,6 +389,27 @@ class NexoHttpTest(unittest.TestCase):
         self.assertEqual(draft['name'], 'Câmera Intelbras')
         self.assertTrue(draft['importNotice'])
 
+    def test_ml_uses_permalink_fallback_when_api_and_browser_are_blocked(self):
+        authorization = base64.b64encode(b'admin:secret').decode()
+        headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
+        with patch(
+            'app.fetch_html', side_effect=ImportErrorMessage('Leitura pública bloqueada.')
+        ), patch(
+            'app.fetch_rendered_html', side_effect=ImportErrorMessage('Navegador bloqueado.')
+        ):
+            with self.request(
+                '/api/products/import',
+                json.dumps({
+                    'url': 'https://produto.mercadolivre.com.br/MLB-6068020650-'
+                           'capa-iphone-16e-e-17e-magsafe-_JM'
+                }).encode(),
+                headers,
+            ) as response:
+                draft = json.load(response)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(draft['name'], 'Capa iPhone 16e e 17e MagSafe')
+        self.assertNotIn('Conecte sua conta', draft['importNotice'])
+
     def test_uploaded_photo_is_served_from_own_server(self):
         authorization = base64.b64encode(b'admin:secret').decode()
         image = base64.b64decode(

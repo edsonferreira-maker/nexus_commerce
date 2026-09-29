@@ -8,6 +8,7 @@ from page_import import (
     augment_with_dom_snapshot,
     extract_product,
     fetch_html,
+    mercado_livre_link_fallback,
     market_for_url,
 )
 
@@ -121,6 +122,30 @@ class PageImportTest(unittest.TestCase):
             market_for_url('https://amazon.com.br.evil.example/dp/B012345678')
         with self.assertRaisesRegex(ImportErrorMessage, 'não trouxe dados do produto'):
             extract_product('https://www.amazon.com.br/dp/B012345678', '<html></html>')
+
+    def test_builds_last_resort_draft_from_mlb_permalink(self):
+        product = mercado_livre_link_fallback(
+            'https://produto.mercadolivre.com.br/MLB-6068020650-capa-iphone-16e-'
+            'e-17e-magsafe-anti-impacto-suporte-retratil-_JM?variation=188173224482'
+        )
+        self.assertEqual(
+            product['name'],
+            'Capa iPhone 16e e 17e MagSafe anti impacto suporte retratil',
+        )
+        self.assertEqual(product['market'], 'Mercado Livre')
+        self.assertEqual(product['price'], '')
+        self.assertEqual(product['images'], [])
+        self.assertIn('bloqueou a leitura automática', product['importNotice'])
+
+    def test_builds_last_resort_draft_from_mlbu_permalink(self):
+        product = mercado_livre_link_fallback(
+            'https://www.mercadolivre.com.br/capa-capinha-anti-shock-para-samsung--'
+            'pelicula-ceramica-3d/up/MLBU4195394312'
+        )
+        self.assertEqual(
+            product['name'],
+            'Capa capinha anti shock para samsung pelicula ceramica 3d',
+        )
 
 
 if __name__ == '__main__':
