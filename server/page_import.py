@@ -44,13 +44,13 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def fetch_html(url: str) -> str:
-    market_for_url(url)
+    market, _ = market_for_url(url)
     opener = urllib.request.build_opener(SafeRedirect)
-    request = urllib.request.Request(url, headers={
-        'User-Agent': 'Mozilla/5.0 (compatible; NexoCommerce/1.0)',
-        'Accept': 'text/html,application/xhtml+xml',
-    })
-    try:
+    def read(user_agent: str) -> str:
+        request = urllib.request.Request(url, headers={
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml',
+        })
         with opener.open(request, timeout=12) as response:
             final_path = urllib.parse.urlsplit(response.geturl()).path.lower()
             if any(part in final_path for part in (
@@ -64,7 +64,19 @@ def fetch_html(url: str) -> str:
             if len(raw) > MAX_HTML:
                 raise ImportErrorMessage('A página é grande demais para importação automática.')
             return raw.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
+    try:
+        return read('Mozilla/5.0 (compatible; NexoCommerce/1.0)')
     except urllib.error.HTTPError as error:
+        if market == 'mercadolivre' and error.code in (403, 429):
+            try:
+                # O Mercado Livre publica metadados completos para agentes de
+                # pré-visualização de links mesmo quando bloqueia IPs de nuvem.
+                return read(
+                    'facebookexternalhit/1.1 '
+                    '(+https://nexus-commerce-1n5m.onrender.com)'
+                )
+            except (urllib.error.HTTPError, OSError, UnicodeError):
+                pass
         raise ImportErrorMessage(
             f'A loja bloqueou a leitura direta (HTTP {error.code}). A inspeção pelo navegador será tentada automaticamente.'
         ) from error

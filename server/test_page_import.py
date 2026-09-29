@@ -1,14 +1,51 @@
 import unittest
+import urllib.error
+from email.message import Message
+from unittest.mock import patch
 
 from page_import import (
     ImportErrorMessage,
     augment_with_dom_snapshot,
     extract_product,
+    fetch_html,
     market_for_url,
 )
 
 
 class PageImportTest(unittest.TestCase):
+    def test_mercado_livre_retries_as_link_preview_after_cloud_block(self):
+        class Response:
+            def __init__(self):
+                self.headers = Message()
+                self.headers['Content-Type'] = 'text/html; charset=utf-8'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def geturl(self):
+                return 'https://produto.mercadolivre.com.br/MLB-1234567-produto-_JM'
+
+            def read(self, _limit):
+                return b'<html><h1>Produto</h1></html>'
+
+        requests = []
+        class Opener:
+            def open(self, request, timeout):
+                requests.append((request, timeout))
+                if len(requests) == 1:
+                    raise urllib.error.HTTPError(request.full_url, 403, 'Forbidden', {}, None)
+                return Response()
+
+        with patch('page_import.urllib.request.build_opener', return_value=Opener()):
+            html = fetch_html(
+                'https://produto.mercadolivre.com.br/MLB-1234567-produto-_JM'
+            )
+        self.assertIn('<h1>Produto</h1>', html)
+        self.assertIn('facebookexternalhit', requests[1][0].get_header('User-agent'))
+
     def test_extracts_product_metadata_for_supported_markets(self):
         cases = [
             ('https://www.mercadolivre.com.br/camera/p/MLB47535705', 'Mercado Livre'),
