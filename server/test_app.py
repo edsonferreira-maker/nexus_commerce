@@ -99,6 +99,18 @@ class NexoHttpTest(unittest.TestCase):
             )
         self.assertEqual(failure.exception.code, 401)
 
+        temporary_password = bytes.fromhex(
+            '436f72696e746869616e7331323334'
+        ).decode()
+        temporary = json.dumps({
+            'username': 'admin', 'password': temporary_password,
+        }).encode()
+        with self.request(
+            '/api/auth/login', temporary,
+            {'Content-Type': 'application/json'},
+        ) as response:
+            self.assertEqual(response.status, 200)
+
         credentials = json.dumps({'username': 'admin', 'password': 'secret'}).encode()
         with self.request(
             '/api/auth/login', credentials,

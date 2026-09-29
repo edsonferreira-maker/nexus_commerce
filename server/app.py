@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import gzip
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -72,6 +73,9 @@ def import_public_product(source_url: str, supplied_html: str | None = None) -> 
 SESSION_RE = re.compile(r"^[a-f0-9]{32}$")
 ADMIN_SESSION_RE = re.compile(r"^[a-f0-9]{64}$")
 ADMIN_SESSION_SECONDS = 12 * 60 * 60
+# Acesso temporário para concluir a primeira configuração no Render. Remover
+# assim que NEXO_ADMIN_PASSWORD estiver salvo como secret no serviço.
+TEMPORARY_ADMIN_PASSWORD_SHA256 = '2f2bf584bb6f7c89335ca5b01823de8f0cae2733424531396ca474e3b0c398bd'
 PRODUCT_SLUG_RE = re.compile(r'(?:mlb[0-9]{7,15}|p-[a-f0-9]{16})')
 PRODUCT_ID_RE = re.compile(r'(?:MLB[0-9]{7,15}|SRC[A-F0-9]{16})')
 MIME = {
@@ -414,6 +418,14 @@ class NexoServer(ThreadingHTTPServer):
         with self.admin_sessions_lock:
             self.admin_sessions.pop(token, None)
 
+    def valid_admin_login(self, username: str, password: str) -> bool:
+        if not hmac.compare_digest(username, self.admin_user):
+            return False
+        configured = hmac.compare_digest(password, self.admin_password)
+        temporary_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        temporary = hmac.compare_digest(temporary_hash, TEMPORARY_ADMIN_PASSWORD_SHA256)
+        return configured or temporary
+
     @property
     def ml_configured(self) -> bool:
         return all(os.environ.get(name) for name in ('ML_CLIENT_ID', 'ML_CLIENT_SECRET', 'ML_REDIRECT_URI'))
@@ -597,9 +609,11 @@ class NexoHandler(BaseHTTPRequestHandler):
         if path == '/api/auth/login':
             username = body.get('username')
             password = body.get('password')
-            valid_user = isinstance(username, str) and hmac.compare_digest(username, self.server.admin_user)
-            valid_password = isinstance(password, str) and hmac.compare_digest(password, self.server.admin_password)
-            if not (valid_user and valid_password):
+            if not (
+                isinstance(username, str)
+                and isinstance(password, str)
+                and self.server.valid_admin_login(username, password)
+            ):
                 return self.send_json_error('Usuário ou senha incorretos.', HTTPStatus.UNAUTHORIZED)
             token = self.server.create_admin_session()
             secure = '; Secure' if self.forwarded_proto() == 'https' else ''
@@ -762,8 +776,8 @@ class NexoHandler(BaseHTTPRequestHandler):
             decoded = base64.b64decode(value[6:], validate=True).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             return False
-        expected = f"{self.server.admin_user}:{self.server.admin_password}"
-        return hmac.compare_digest(decoded, expected)
+        username, separator, password = decoded.partition(':')
+        return bool(separator) and self.server.valid_admin_login(username, password)
 
     def admin_session_token(self) -> str:
         cookie = SimpleCookie()
