@@ -34,6 +34,18 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // Remove o cache de versões antigas. O servidor controla a atualização
+    // dos arquivos principais e os assets imutáveis continuam em cache.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        registrations.forEach((registration) => registration.unregister());
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then((keys) => keys.forEach((key) => caches.delete(key)));
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

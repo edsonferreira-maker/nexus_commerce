@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08111f">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Entrar — Nexo Commerce</title>
+  <style>
+    :root { color-scheme:dark; --ink:#08111f; --panel:#111d30; --line:#27354b; --muted:#909db0; --green:#72e59b; --purple:#8b7cff; --red:#ff7885; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#fff; background:linear-gradient(135deg,#07101e,#0b1525 55%,#10172a); }
+    body::before,body::after { content:""; position:fixed; width:520px; height:520px; border-radius:50%; pointer-events:none; }
+    body::before { left:-230px; top:-240px; background:rgba(139,124,255,.1); }
+    body::after { right:-200px; bottom:-260px; background:rgba(114,229,155,.07); }
+    .page { position:relative; z-index:1; min-height:100vh; display:grid; grid-template-columns:1.15fr .85fr; }
+    .brand { padding:54px 6vw; display:flex; flex-direction:column; }
+    .brandline { display:flex; align-items:center; gap:14px; }
+    .mark { width:50px; height:50px; border-radius:13px; object-fit:cover; }
+    .word strong { display:block; font-size:20px; letter-spacing:1.6px; }
+    .word span { color:var(--muted); font-size:9px; font-weight:700; letter-spacing:2.2px; }
+    .hero { margin:auto 0; max-width:650px; }
+    .hero .large { width:104px; height:104px; border-radius:25px; }
+    h1 { margin:30px 0 18px; max-width:620px; font-size:clamp(38px,4vw,58px); line-height:1.06; letter-spacing:-2px; }
+    .hero p { max-width:530px; color:#adb8c9; font-size:17px; }
+    .features { display:flex; gap:28px; color:#c0c9d6; font-size:13px; font-weight:600; }
+    .features span::before { content:"✓"; display:inline-grid; place-items:center; width:32px; height:32px; margin-right:10px; color:var(--green); background:rgba(255,255,255,.06); border-radius:10px; }
+    .login-side { display:grid; place-items:center; padding:32px 5vw; }
+    .card { width:min(430px,100%); padding:38px; border:1px solid rgba(255,255,255,.09); border-radius:28px; background:rgba(17,29,48,.95); box-shadow:0 24px 60px rgba(0,0,0,.4); }
+    .mobile-brand { display:none; margin-bottom:28px; }
+    .eyebrow { display:inline-block; padding:7px 11px; color:var(--green); background:rgba(114,229,155,.1); border:1px solid rgba(114,229,155,.22); border-radius:99px; font-size:10px; font-weight:800; letter-spacing:1.2px; }
+    h2 { margin:20px 0 8px; font-size:30px; line-height:1.15; letter-spacing:-1px; }
+    .intro { margin:0 0 28px; color:var(--muted); }
+    label { display:block; margin:18px 0 8px; font-size:13px; font-weight:700; }
+    .field { position:relative; }
+    input { width:100%; height:52px; padding:0 46px 0 15px; border:1px solid var(--line); border-radius:12px; outline:none; color:#fff; background:rgba(8,17,31,.72); font:inherit; }
+    input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(114,229,155,.08); }
+    input::placeholder { color:#718096; }
+    .reveal { position:absolute; right:6px; top:6px; width:40px; height:40px; border:0; border-radius:9px; color:var(--muted); background:transparent; cursor:pointer; font-size:17px; }
+    .error { display:none; margin-top:16px; padding:12px 13px; color:var(--red); background:rgba(255,120,133,.1); border:1px solid rgba(255,120,133,.28); border-radius:12px; }
+    .submit { width:100%; height:52px; margin-top:26px; border:0; border-radius:14px; color:var(--ink); background:var(--green); font:800 14px Inter,ui-sans-serif,system-ui,sans-serif; cursor:pointer; }
+    .submit:hover { filter:brightness(1.04); }
+    .secure { margin:22px 0 0; text-align:center; color:var(--muted); font-size:12px; }
+    @media (max-width:899px) {
+      .page { display:block; padding:22px; }
+      .brand { display:none; }
+      .login-side { min-height:calc(100vh - 44px); padding:20px 0; }
+      .card { padding:26px; }
+      .mobile-brand { display:flex; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="brand">
+      <div class="brandline"><img class="mark" src="/assets/assets/branding/nexo-commerce-logo.png" alt=""><div class="word"><strong>NEXO</strong><span>COMMERCE</span></div></div>
+      <div class="hero"><img class="mark large" src="/assets/assets/branding/nexo-commerce-logo.png" alt="Logo Nexo Commerce"><h1>Sua operação conectada. Seu crescimento em movimento.</h1><p>Produtos, pedidos e performance reunidos em um painel criado para decisões mais rápidas.</p></div>
+      <div class="features"><span>Operação ágil</span><span>Dados em tempo real</span></div>
+    </section>
+    <section class="login-side">
+      <form class="card" method="post" action="/login" autocomplete="on">
+        <div class="brandline mobile-brand"><img class="mark" src="/assets/assets/branding/nexo-commerce-logo.png" alt=""><div class="word"><strong>NEXO</strong><span>COMMERCE</span></div></div>
+        <span class="eyebrow">PAINEL ADMINISTRATIVO</span>
+        <h2>Bem-vindo de volta</h2>
+        <p class="intro">Entre para acompanhar sua operação e gerenciar seus produtos.</p>
+        <label for="username">Usuário</label>
+        <input id="username" name="username" type="text" autocomplete="username" placeholder="Digite seu usuário" required autofocus>
+        <label for="password">Senha</label>
+        <div class="field"><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required><button class="reveal" type="button" aria-label="Mostrar senha" title="Mostrar senha">◉</button></div>
+        <div class="error" role="alert">Usuário ou senha incorretos.</div>
+        <button class="submit" type="submit">Entrar no painel →</button>
+        <p class="secure">◇ Acesso protegido e seguro</p>
+      </form>
+    </section>
+  </main>
+  <script>
+    if (new URLSearchParams(location.search).has('login_error')) document.querySelector('.error').style.display = 'block';
+    document.querySelector('.reveal').addEventListener('click', (event) => {
+      const field = document.querySelector('#password');
+      field.type = field.type === 'password' ? 'text' : 'password';
+      event.currentTarget.setAttribute('aria-label', field.type === 'password' ? 'Mostrar senha' : 'Ocultar senha');
+    });
+  </script>
+</body>
+</html>

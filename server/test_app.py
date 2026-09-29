@@ -1,4 +1,5 @@
 import base64
+import http.client
 import json
 import os
 import tempfile
@@ -52,6 +53,12 @@ class NexoHttpTest(unittest.TestCase):
         web = root / 'web'
         web.mkdir()
         (web / 'index.html').write_text('<html>Nexo</html>')
+        (web / 'login.html').write_text(
+            '<form method="post" action="/login" autocomplete="on">'
+            '<input name="username" autocomplete="username">'
+            '<input name="password" autocomplete="current-password">'
+            '</form>'
+        )
         self.server = NexoServer(('127.0.0.1', 0), web, root / 'data', 'secret', geo_locator=FakeGeo())
         self.server.store.save_product({'id': 'MLB1234567', 'slug': 'mlb1234567', 'name': 'Teste'})
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -90,6 +97,9 @@ class NexoHttpTest(unittest.TestCase):
     def test_custom_login_creates_and_removes_admin_session(self):
         with self.request('/') as response:
             self.assertEqual(response.status, 200)
+            login_page = response.read().decode()
+        self.assertIn('autocomplete="username"', login_page)
+        self.assertIn('autocomplete="current-password"', login_page)
 
         invalid = json.dumps({'username': 'admin', 'password': 'wrong'}).encode()
         with self.assertRaises(urllib.error.HTTPError) as failure:
@@ -131,6 +141,27 @@ class NexoHttpTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as failure:
             self.request('/api/auth/session', headers={'Cookie': cookie})
         self.assertEqual(failure.exception.code, 401)
+
+    def test_native_login_form_sets_persistent_cookie(self):
+        connection = http.client.HTTPConnection(
+            '127.0.0.1', self.server.server_address[1], timeout=5,
+        )
+        try:
+            body = urllib.parse.urlencode({
+                'username': 'admin', 'password': 'secret',
+            })
+            connection.request(
+                'POST', '/login', body,
+                {'Content-Type': 'application/x-www-form-urlencoded'},
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 303)
+            self.assertEqual(response.getheader('Location'), '/')
+            cookie = response.getheader('Set-Cookie')
+            self.assertIn('Max-Age=2592000', cookie)
+            self.assertIn('HttpOnly', cookie)
+        finally:
+            connection.close()
 
     def test_admin_session_survives_server_restart_and_rejects_tampering(self):
         token = self.server.create_admin_session()

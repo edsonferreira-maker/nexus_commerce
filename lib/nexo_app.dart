@@ -1489,7 +1489,8 @@ class ServerSettings extends StatelessWidget {
                       FilledButton.icon(
                         onPressed: () => launchUrl(
                           Uri.base.resolve('/api/mercadolivre/connect'),
-                          mode: LaunchMode.externalApplication,
+                          mode: LaunchMode.platformDefault,
+                          webOnlyWindowName: '_self',
                         ),
                         icon: const Icon(Icons.link),
                         label: const Text('Conectar conta'),
@@ -3365,10 +3366,11 @@ class _ImportDialogState extends State<ImportDialog> {
               TextButton.icon(
                 onPressed: () => launchUrl(
                   Uri.base.resolve('/api/mercadolivre/connect'),
-                  mode: LaunchMode.externalApplication,
+                  mode: LaunchMode.platformDefault,
+                  webOnlyWindowName: '_self',
                 ),
                 icon: const Icon(Icons.link),
-                label: const Text('Conectar conta do Mercado Livre'),
+                label: const Text('Conectar conta do Mercado Livre (uma vez)'),
               ),
             const SizedBox(height: 22),
             Container(

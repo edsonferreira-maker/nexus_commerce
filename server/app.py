@@ -570,6 +570,10 @@ class NexoHandler(BaseHTTPRequestHandler):
             if not re.fullmatch(r'(?:mlb[0-9]{7,15}-[0-9]+|upload-[a-f0-9]{32})\.(jpg|png|webp)', name):
                 return self.send_error(HTTPStatus.NOT_FOUND)
             return self.serve_file(self.server.media_root / name)
+        if path in ('/', '/index.html', '/login') and not self.authorized():
+            return self.serve_file(self.server.web_root / 'login.html')
+        if path == '/login':
+            return self.redirect('/')
         if path.startswith('/p/'):
             slug = path[3:]
             if self.server.store.get_product(slug) is None:
@@ -589,14 +593,23 @@ class NexoHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", MIME.get(asset.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store" if asset.name == "index.html" else "public, max-age=3600")
+        mutable_web_files = {
+            'index.html', 'login.html', 'flutter_service_worker.js', 'flutter_bootstrap.js',
+            'main.dart.js', 'manifest.json', 'version.json',
+            'AssetManifest.bin', 'AssetManifest.bin.json', 'FontManifest.json',
+        }
+        cache_control = 'no-store' if asset.name in mutable_web_files else 'public, max-age=3600'
+        self.send_header('Cache-Control', cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
-        public_paths = ('/api/traffic/event', '/api/mercadolivre/notify', '/api/auth/login', '/api/auth/logout')
+        public_paths = (
+            '/login', '/api/traffic/event', '/api/mercadolivre/notify',
+            '/api/auth/login', '/api/auth/logout',
+        )
         if path not in (*public_paths, '/api/products/import', '/api/products/publish', '/api/media/upload'):
             return self.send_error(HTTPStatus.NOT_FOUND)
         if path not in public_paths and not self.authorized():
@@ -608,6 +621,29 @@ class NexoHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             return self.send_error(HTTPStatus.BAD_REQUEST)
+        if path == '/login':
+            content_type = self.headers.get('Content-Type', '').split(';')[0]
+            if not 0 < length <= 4096 or content_type != 'application/x-www-form-urlencoded':
+                return self.send_error(HTTPStatus.BAD_REQUEST)
+            try:
+                form = urllib.parse.parse_qs(self.rfile.read(length).decode('utf-8'))
+            except UnicodeDecodeError:
+                return self.send_error(HTTPStatus.BAD_REQUEST)
+            username = (form.get('username') or [''])[0]
+            password = (form.get('password') or [''])[0]
+            if not self.server.valid_admin_login(username, password):
+                return self.redirect('/?login_error=1')
+            token = self.server.create_admin_session()
+            secure = '; Secure' if self.forwarded_proto() == 'https' else ''
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header('Location', '/')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header(
+                'Set-Cookie',
+                f'nexo_admin={token}; Path=/; Max-Age={ADMIN_SESSION_SECONDS}; HttpOnly; SameSite=Strict{secure}',
+            )
+            self.end_headers()
+            return
         if path == '/api/media/upload':
             if not 0 < length <= 10 * 1024 * 1024:
                 return self.send_json_error('A foto deve ter até 10 MB.', HTTPStatus.BAD_REQUEST)
