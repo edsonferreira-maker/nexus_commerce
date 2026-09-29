@@ -1483,6 +1483,13 @@ class ServerSettings extends StatelessWidget {
                           : 'Cadastre as credenciais do aplicativo no arquivo .env do servidor.',
                       style: const TextStyle(color: muted),
                     ),
+                    if ((status['error'] as String? ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        status['error'] as String,
+                        style: const TextStyle(color: red, fontSize: 13),
+                      ),
+                    ],
                     if (status['configured'] == true &&
                         status['connected'] != true) ...[
                       const SizedBox(height: 16),

@@ -60,12 +60,29 @@ def request_json(url: str, token: str | None = None, form: dict | None = None):
         with urllib.request.urlopen(request, timeout=15) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
+        details = {}
+        try:
+            details = json.loads(error.read().decode('utf-8', 'replace'))
+        except (ValueError, UnicodeError):
+            pass
+        api_error = str(details.get('error') or '')
+        api_message = str(details.get('message') or details.get('error_description') or '')
+        if error.code == 400 and api_error == 'invalid_grant':
+            raise MercadoLivreError(
+                'O código de autorização expirou ou já foi utilizado. Conecte a conta novamente.'
+            ) from error
+        if error.code in (400, 401) and api_error == 'invalid_client':
+            raise MercadoLivreError(
+                'O Mercado Livre recusou as credenciais do aplicativo.'
+            ) from error
         if error.code == 401:
             raise MercadoLivreError('A autorização do Mercado Livre expirou. Reconecte a conta.') from error
         if error.code == 404:
             raise MercadoLivreError('Produto não encontrado no Mercado Livre.') from error
         if error.code == 429:
             raise MercadoLivreError('O Mercado Livre limitou as consultas. Tente novamente em alguns minutos.') from error
+        if api_message and len(api_message) <= 240:
+            raise MercadoLivreError(f'Mercado Livre: {api_message}') from error
         raise MercadoLivreError(f'Falha na API do Mercado Livre (HTTP {error.code}).') from error
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise MercadoLivreError('Não foi possível consultar o Mercado Livre agora.') from error

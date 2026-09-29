@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import gzip
 import hashlib
+import html
 import hmac
 import ipaddress
 import json
@@ -73,6 +74,8 @@ def import_public_product(source_url: str, supplied_html: str | None = None) -> 
 SESSION_RE = re.compile(r"^[a-f0-9]{32}$")
 ADMIN_SESSION_RE = re.compile(r"^[0-9]{10}\.[a-f0-9]{32}\.[a-f0-9]{64}$")
 ADMIN_SESSION_SECONDS = 30 * 24 * 60 * 60
+ML_OAUTH_STATE_RE = re.compile(r"^[0-9]{10}\.[a-f0-9]{32}\.[a-f0-9]{64}$")
+ML_OAUTH_STATE_SECONDS = 30 * 60
 # Acesso temporário para concluir a primeira configuração no Render. Remover
 # assim que NEXO_ADMIN_PASSWORD estiver salvo como secret no serviço.
 TEMPORARY_ADMIN_PASSWORD_SHA256 = '2f2bf584bb6f7c89335ca5b01823de8f0cae2733424531396ca474e3b0c398bd'
@@ -400,6 +403,7 @@ class NexoServer(ThreadingHTTPServer):
         self.admin_session_secret = hashlib.sha256(session_secret.encode('utf-8')).digest()
         self.revoked_admin_sessions: dict[str, int] = {}
         self.admin_sessions_lock = threading.Lock()
+        self.ml_last_error = ''
         self.trust_proxy = trust_proxy
         super().__init__(address, NexoHandler)
 
@@ -451,6 +455,31 @@ class NexoServer(ThreadingHTTPServer):
         temporary_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
         temporary = hmac.compare_digest(temporary_hash, TEMPORARY_ADMIN_PASSWORD_SHA256)
         return configured or temporary
+
+    def create_ml_oauth_state(self) -> str:
+        expiry = str(int(time.time()) + ML_OAUTH_STATE_SECONDS)
+        nonce = secrets.token_hex(16)
+        payload = f'{expiry}.{nonce}'
+        signature = hmac.new(
+            self.admin_session_secret,
+            f'mercadolivre:{payload}'.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        return f'{payload}.{signature}'
+
+    def valid_ml_oauth_state(self, state: str) -> bool:
+        if not ML_OAUTH_STATE_RE.fullmatch(state):
+            return False
+        expiry, nonce, signature = state.split('.')
+        if int(expiry) <= int(time.time()):
+            return False
+        payload = f'{expiry}.{nonce}'
+        expected = hmac.new(
+            self.admin_session_secret,
+            f'mercadolivre:{payload}'.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(signature, expected)
 
     @property
     def ml_configured(self) -> bool:
@@ -516,13 +545,15 @@ class NexoHandler(BaseHTTPRequestHandler):
             return self.send_json({
                 'configured': self.server.ml_configured,
                 'connected': self.server.store.get_token() is not None,
+                'error': self.server.ml_last_error,
             })
         if path == '/api/mercadolivre/connect':
             if not self.authorized():
                 return self.require_auth()
             if not self.server.ml_configured:
                 return self.send_json_error('Configure as credenciais do Mercado Livre no servidor.', HTTPStatus.SERVICE_UNAVAILABLE)
-            state = self.server.store.create_oauth_state()
+            self.server.ml_last_error = ''
+            state = self.server.create_ml_oauth_state()
             query = urllib.parse.urlencode({
                 'response_type': 'code',
                 'client_id': os.environ['ML_CLIENT_ID'],
@@ -534,8 +565,16 @@ class NexoHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             state = (query.get('state') or [''])[0]
             code = (query.get('code') or [''])[0]
-            if not state or not code or not self.server.store.consume_oauth_state(state):
-                return self.send_json_error('Autorização inválida ou expirada.', HTTPStatus.BAD_REQUEST)
+            oauth_error = (query.get('error_description') or query.get('error') or [''])[0]
+            if not state or not self.server.valid_ml_oauth_state(state):
+                self.server.ml_last_error = 'A autorização expirou antes de retornar ao Nexo. Tente conectar novamente.'
+                return self.send_oauth_result(False, self.server.ml_last_error)
+            if oauth_error:
+                self.server.ml_last_error = 'A autorização foi cancelada ou recusada no Mercado Livre.'
+                return self.send_oauth_result(False, self.server.ml_last_error)
+            if not code:
+                self.server.ml_last_error = 'A autorização expirou antes de retornar ao Nexo. Tente conectar novamente.'
+                return self.send_oauth_result(False, self.server.ml_last_error)
             try:
                 token = exchange_code(
                     os.environ['ML_CLIENT_ID'], os.environ['ML_CLIENT_SECRET'],
@@ -543,8 +582,10 @@ class NexoHandler(BaseHTTPRequestHandler):
                 )
                 self.server.store.save_token(token)
             except (MercadoLivreError, KeyError) as error:
-                return self.send_json_error(str(error), HTTPStatus.BAD_GATEWAY)
-            return self.redirect('/')
+                self.server.ml_last_error = str(error)
+                return self.send_oauth_result(False, self.server.ml_last_error)
+            self.server.ml_last_error = ''
+            return self.send_oauth_result(True, 'Conta do Mercado Livre conectada com sucesso.')
         if path == "/api/traffic/live":
             if not self.authorized():
                 return self.require_auth()
@@ -858,6 +899,26 @@ class NexoHandler(BaseHTTPRequestHandler):
         self.send_header('Location', location)
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
+
+    def send_oauth_result(self, success: bool, message: str):
+        title = 'Conta conectada' if success else 'Não foi possível conectar'
+        color = '#72e59b' if success else '#ff7885'
+        refresh = '<meta http-equiv="refresh" content="2;url=/">' if success else ''
+        page = f'''<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">{refresh}
+        <title>{title} — Nexo Commerce</title></head>
+        <body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#08111f;color:white;font:16px system-ui">
+        <main style="width:min(520px,calc(100% - 40px));padding:36px;border:1px solid #25334a;border-radius:22px;background:#101b2d;text-align:center">
+        <div style="font-size:44px;color:{color}">{'✓' if success else '!'}</div>
+        <h1 style="font-size:26px">{title}</h1><p style="color:#aab5c5">{html.escape(message)}</p>
+        <a href="/" style="display:inline-block;margin-top:16px;padding:13px 20px;border-radius:12px;background:#72e59b;color:#08111f;text-decoration:none;font-weight:800">Voltar ao Nexo</a>
+        </main></body></html>'''.encode('utf-8')
+        self.send_response(HTTPStatus.OK if success else HTTPStatus.BAD_REQUEST)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(page)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(page)
 
     def send_json_error(self, message: str, status: HTTPStatus):
         data = json.dumps({'message': message}, ensure_ascii=False).encode('utf-8')

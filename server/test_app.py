@@ -165,6 +165,7 @@ class NexoHttpTest(unittest.TestCase):
 
     def test_admin_session_survives_server_restart_and_rejects_tampering(self):
         token = self.server.create_admin_session()
+        oauth_state = self.server.create_ml_oauth_state()
         replacement = NexoServer(
             ('127.0.0.1', 0), self.server.web_root, self.server.data_root,
             'secret', geo_locator=FakeGeo(),
@@ -173,8 +174,21 @@ class NexoHttpTest(unittest.TestCase):
             self.assertTrue(replacement.has_admin_session(token))
             tampered = token[:-1] + ('0' if token[-1] != '0' else '1')
             self.assertFalse(replacement.has_admin_session(tampered))
+            self.assertTrue(replacement.valid_ml_oauth_state(oauth_state))
+            oauth_tampered = oauth_state[:-1] + ('0' if oauth_state[-1] != '0' else '1')
+            self.assertFalse(replacement.valid_ml_oauth_state(oauth_tampered))
         finally:
             replacement.server_close()
+
+    def test_oauth_callback_explains_denied_authorization(self):
+        state = self.server.create_ml_oauth_state()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request(
+                '/api/mercadolivre/callback?'
+                + urllib.parse.urlencode({'state': state, 'error': 'access_denied'})
+            )
+        self.assertEqual(failure.exception.code, 400)
+        self.assertIn('Não foi possível conectar', failure.exception.read().decode())
 
     def test_rejects_other_origin_and_other_pages(self):
         payload = json.dumps({'page': PUBLISHED_PAGE, 'kind': 'view'}).encode()
