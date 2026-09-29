@@ -17,8 +17,8 @@ services:
       - key: NEXO_ADMIN_PASSWORD
         sync: false
       - key: ML_CLIENT_ID
-        sync: false
+        value: "6912158999502788"
       - key: ML_CLIENT_SECRET
         sync: false
       - key: ML_REDIRECT_URI
-        sync: false
+        value: "https://nexus-commerce-1n5m.onrender.com/api/mercadolivre/callback"
