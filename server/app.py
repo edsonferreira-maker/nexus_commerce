@@ -793,12 +793,15 @@ class NexoHandler(BaseHTTPRequestHandler):
                     product = import_public_product(source_url, supplied_html)
                 elif market == 'mercadolivre':
                     item_id = item_id_from_url(source_url)
+                    selected_item = selected_item_from_url(source_url)
+                    if item_id.startswith('MLBU') and selected_item:
+                        item_id = selected_item
                     try:
                         product = fetch_product(
                             item_id,
                             self.server.ml_access_token(),
                             catalog=is_catalog_product_url(source_url),
-                            selected_item=selected_item_from_url(source_url),
+                            selected_item=selected_item,
                         )
                         product['sourceUrl'] = source_url
                         self.server.cache_images(product)

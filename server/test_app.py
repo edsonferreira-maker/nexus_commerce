@@ -279,6 +279,30 @@ class NexoHttpTest(unittest.TestCase):
         with self.request('/p/mlb7654321') as response:
             self.assertEqual(response.status, 200)
 
+    def test_mlbu_ad_link_prefers_selected_mlb_listing(self):
+        self.server.ml_access_token = lambda: 'token'
+        self.server.cache_images = lambda product: None
+        product = {
+            'id': 'MLB4831773371', 'slug': 'mlb4831773371', 'name': 'Capa Samsung',
+            'price': 'R$ 19,90', 'market': 'Mercado Livre',
+            'sourceUrl': 'https://produto.mercadolivre.com.br/MLB-4831773371',
+            'images': ['https://http2.mlstatic.com/capa.jpg'], 'reviews': [],
+            'description': 'Descrição', 'rating': '0', 'reviewCount': 0,
+            'stock': 1, 'redirect': True,
+        }
+        authorization = base64.b64encode(b'admin:secret').decode()
+        headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
+        url = (
+            'https://www.mercadolivre.com.br/capa/up/MLBU4195394312?'
+            'pdp_filters=item_id:MLB4831773371#is_advertising=true'
+        )
+        with patch('app.fetch_product', return_value=product) as fetch:
+            with self.request(
+                '/api/products/import', json.dumps({'url': url}).encode(), headers,
+            ) as response:
+                self.assertEqual(json.load(response)['name'], 'Capa Samsung')
+        self.assertEqual(fetch.call_args.args[0], 'MLB4831773371')
+
     def test_creates_editable_page_from_marketplace_html(self):
         authorization = base64.b64encode(b'admin:secret').decode()
         headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}

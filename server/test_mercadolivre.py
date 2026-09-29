@@ -24,6 +24,13 @@ class MercadoLivreTest(unittest.TestCase):
             selected_item_from_url('https://www.mercadolivre.com.br/camera-inteligente-im7-3mp-de-resolucao-branca-intelbras/p/MLB47535705?pdp_filters=deal%3AMLB1365080-1#polycard_client=search-desktop&be_origin=backend&wid=MLB6167651244&sid=search'),
             'MLB6167651244',
         )
+        self.assertEqual(
+            selected_item_from_url(
+                'https://www.mercadolivre.com.br/capa/up/MLBU4195394312?'
+                'pdp_filters=item_id:MLB4831773371#is_advertising=true'
+            ),
+            'MLB4831773371',
+        )
 
     def test_catalog_link_uses_available_offer_and_catalog_reviews(self):
         urls = []

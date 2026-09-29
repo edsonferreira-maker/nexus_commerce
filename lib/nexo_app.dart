@@ -3622,6 +3622,18 @@ class _ImportDialogState extends State<ImportDialog> {
             page.importNotice,
             style: const TextStyle(color: orange, fontSize: 12),
           ),
+          if (page.market == 'Mercado Livre' && page.images.isEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => launchUrl(
+                  Uri.base.resolve('/nexo-mercadolivre-extension.zip'),
+                  mode: LaunchMode.platformDefault,
+                ),
+                icon: const Icon(Icons.extension_outlined, size: 18),
+                label: const Text('Baixar conector para capturar preço e fotos'),
+              ),
+            ),
           const SizedBox(height: 12),
         ],
         Row(

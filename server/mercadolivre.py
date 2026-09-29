@@ -45,9 +45,15 @@ def is_catalog_product_url(value: str) -> bool:
 def selected_item_from_url(value: str) -> str | None:
     parsed = urllib.parse.urlsplit(value.strip())
     for section in (parsed.query, parsed.fragment):
-        item = (urllib.parse.parse_qs(section).get('wid') or [''])[0]
-        if ITEM_ID.fullmatch(item):
-            return item.upper().replace('-', '').replace('_', '')
+        parameters = urllib.parse.parse_qs(section)
+        for field in ('wid', 'item_id'):
+            item = (parameters.get(field) or [''])[0]
+            if ITEM_ID.fullmatch(item):
+                return item.upper().replace('-', '').replace('_', '')
+        for filters in parameters.get('pdp_filters') or []:
+            match = re.search(r'(?:^|[|,])item_id:(MLB[-_]?\d{7,15})(?:$|[|,])', filters, re.IGNORECASE)
+            if match:
+                return match.group(1).upper().replace('-', '').replace('_', '')
     return None
 
 
