@@ -2,9 +2,10 @@ NEXO COMMERCE - CONECTOR PARA SAFARI
 
 Abra o projeto Nexo Commerce Connector.xcodeproj no Xcode e execute em My Mac.
 No Safari, ative os recursos para desenvolvedores em Ajustes > Avancado. Depois,
-use Desenvolvedor > Permitir extensoes nao assinadas, reinicie o Safari e ative
-Nexo Commerce Connector em Safari > Ajustes > Extensoes. Permita o acesso ao
-Nexo Commerce e ao Mercado Livre.
+abra a aba Desenvolvedor nos Ajustes e marque Permitir extensoes nao assinadas.
+Sem fechar o Safari, ative Nexo Commerce Connector em Ajustes > Extensoes e
+permita o acesso ao Nexo Commerce e ao Mercado Livre. Essa permissao precisa
+ser marcada novamente sempre que o Safari for encerrado.
 
 Mantenha sua conta aberta no Mercado Livre e recarregue o Nexo Commerce.
 A captura acontece automaticamente durante o loading, sem abrir o F12 ou copiar HTML.

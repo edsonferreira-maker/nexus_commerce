@@ -4,11 +4,12 @@
 2. Na barra superior do Xcode, selecione o esquema **Nexo Commerce Connector** e o destino **My Mac**.
 3. Pressione o botão **Run** (triângulo) ou use `Command + R` e mantenha o aplicativo aberto.
 4. No Safari, abra **Ajustes > Avançado** e ative **Mostrar recursos para desenvolvedores web**.
-5. Na barra de menus do Safari, abra **Desenvolvedor** e marque **Permitir extensões não assinadas**. Confirme com a senha ou Touch ID do Mac.
-6. Feche e abra novamente o Safari.
-7. Abra **Safari > Ajustes > Extensões** e ative **Nexo Commerce Connector**.
-8. Autorize o acesso a `nexus-commerce-1n5m.onrender.com` e aos sites do Mercado Livre, escolhendo **Sempre permitir** quando o Safari perguntar.
-9. Mantenha sua conta aberta no Mercado Livre e recarregue o Nexo Commerce.
+5. Ainda nos Ajustes do Safari, abra a nova aba **Desenvolvedor** e marque **Permitir extensões não assinadas**. Confirme com a senha ou Touch ID do Mac.
+6. Sem fechar o Safari, abra **Ajustes > Extensões** e ative **Nexo Commerce Connector**.
+7. Autorize o acesso a `nexus-commerce-1n5m.onrender.com` e aos sites do Mercado Livre, escolhendo **Sempre permitir** quando o Safari perguntar.
+8. Mantenha sua conta aberta no Mercado Livre e recarregue o Nexo Commerce.
+
+O Safari desmarca **Permitir extensões não assinadas** quando é encerrado. Durante o desenvolvimento, marque essa opção novamente após cada nova abertura do Safari.
 
 Depois da ativação, basta colar o link do produto no Nexo. O conector abre a página em segundo plano, captura as informações e fecha a aba automaticamente. Não é necessário abrir o inspetor nem copiar HTML.
 
