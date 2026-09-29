@@ -1,6 +1,11 @@
 import unittest
 
-from page_import import ImportErrorMessage, extract_product, market_for_url
+from page_import import (
+    ImportErrorMessage,
+    augment_with_dom_snapshot,
+    extract_product,
+    market_for_url,
+)
 
 
 class PageImportTest(unittest.TestCase):
@@ -54,6 +59,20 @@ class PageImportTest(unittest.TestCase):
             'https://images.example.com/1.jpg', 'https://images.example.com/2.jpg',
         ])
         self.assertEqual(product['price'], 'R$ 249,90')
+
+    def test_builds_product_from_automatically_inspected_dom(self):
+        url = 'https://www.mercadolivre.com.br/produto/MLB1234567'
+        html = augment_with_dom_snapshot('<html><body></body></html>', {
+            'title': 'Produto carregado por JavaScript',
+            'description': 'Detalhes encontrados na página visível.',
+            'priceText': 'R$ 1.299,90',
+            'images': ['https://http2.mlstatic.com/produto.jpg'],
+        }, url)
+        product = extract_product(url, html)
+        self.assertEqual(product['name'], 'Produto carregado por JavaScript')
+        self.assertEqual(product['price'], 'R$ 1.299,90')
+        self.assertEqual(product['images'], ['https://http2.mlstatic.com/produto.jpg'])
+        self.assertEqual(product['description'], 'Detalhes encontrados na página visível.')
 
     def test_rejects_arbitrary_urls_and_missing_product_data(self):
         with self.assertRaises(ImportErrorMessage):

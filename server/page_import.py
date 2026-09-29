@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -65,10 +66,59 @@ def fetch_html(url: str) -> str:
             return raw.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
     except urllib.error.HTTPError as error:
         raise ImportErrorMessage(
-            f'A loja bloqueou a leitura automática (HTTP {error.code}). Cole o HTML da página no campo opcional.'
+            f'A loja bloqueou a leitura direta (HTTP {error.code}). A inspeção pelo navegador será tentada automaticamente.'
         ) from error
     except (OSError, UnicodeError) as error:
-        raise ImportErrorMessage('Não foi possível ler a página. Cole o HTML da página no campo opcional.') from error
+        raise ImportErrorMessage('Não foi possível ler a página diretamente. A inspeção pelo navegador será tentada automaticamente.') from error
+
+
+def augment_with_dom_snapshot(html: str, snapshot: dict, url: str) -> str:
+    """Prepend structured product data collected from visible DOM elements."""
+    if not isinstance(snapshot, dict):
+        return html
+    title = snapshot.get('title')
+    description = snapshot.get('description')
+    images = snapshot.get('images')
+    if not isinstance(title, str):
+        title = ''
+    if not isinstance(description, str):
+        description = ''
+    if not isinstance(images, list):
+        images = []
+    images = [
+        image for image in (safe_image(str(value), url) for value in images[:30])
+        if image
+    ]
+    price = snapshot.get('priceAmount')
+    currency = snapshot.get('priceCurrency')
+    if not isinstance(price, str):
+        price = ''
+    if not isinstance(currency, str):
+        currency = ''
+    if not price:
+        visible_price = snapshot.get('priceText')
+        if isinstance(visible_price, str):
+            match = re.search(r'(R\$|US\$|€)\s*([0-9.]+(?:,[0-9]{1,2})?)', visible_price)
+            if match:
+                currency = {'R$': 'BRL', 'US$': 'USD', '€': 'EUR'}[match.group(1)]
+                price = match.group(2).replace('.', '').replace(',', '.')
+    if not title and not images:
+        return html
+    product = {
+        '@context': 'https://schema.org',
+        '@type': 'Product',
+        'name': title[:200],
+        'description': description[:10000],
+        'image': images[:10],
+    }
+    if price and currency:
+        product['offers'] = {
+            '@type': 'Offer',
+            'price': price,
+            'priceCurrency': currency,
+        }
+    encoded = json.dumps(product, ensure_ascii=False).replace('</', '<\\/')
+    return f'<script type="application/ld+json">{encoded}</script>{html}'
 
 
 def fetch_rendered_html(url: str) -> str:
@@ -80,13 +130,18 @@ def fetch_rendered_html(url: str) -> str:
         from playwright.sync_api import sync_playwright
     except ImportError as error:
         raise ImportErrorMessage(
-            'O navegador de captura não está instalado no servidor. Cole o HTML da página no campo opcional.'
+            'O navegador de inspeção automática não está instalado no servidor.'
         ) from error
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
-                page = browser.new_page(locale='pt-BR')
+                page = browser.new_page(
+                    locale='pt-BR',
+                    timezone_id='America/Sao_Paulo',
+                    viewport={'width': 1440, 'height': 1000},
+                    color_scheme='light',
+                )
                 def allow_request(route):
                     request_url = urllib.parse.urlsplit(route.request.url)
                     host = (request_url.hostname or '').lower()
@@ -111,6 +166,14 @@ def fetch_rendered_html(url: str) -> str:
                     page.wait_for_load_state('networkidle', timeout=5000)
                 except BrowserTimeout:
                     pass
+                try:
+                    page.locator('h1, [itemprop="name"], meta[property="og:title"]').first.wait_for(
+                        state='attached', timeout=5000,
+                    )
+                except BrowserTimeout:
+                    pass
+                page.evaluate('window.scrollTo(0, Math.min(document.body.scrollHeight, 1600))')
+                page.wait_for_timeout(750)
                 final_url = page.url
                 market_for_url(final_url)
                 path = urllib.parse.urlsplit(final_url).path.lower()
@@ -119,9 +182,52 @@ def fetch_rendered_html(url: str) -> str:
                     '/account-verification', '/suspicious-traffic',
                 )):
                     raise ImportErrorMessage(
-                        'A loja exigiu login ou verificação no navegador. Cole o HTML da página no campo opcional.'
+                        'A loja exigiu login ou verificação e bloqueou a inspeção automática.'
                     )
                 html = page.content()
+                snapshot = page.evaluate("""
+                    () => {
+                      const content = (selector) =>
+                        document.querySelector(selector)?.getAttribute('content')?.trim() || '';
+                      const text = (selectors) => {
+                        for (const selector of selectors) {
+                          const value = document.querySelector(selector)?.textContent?.trim();
+                          if (value) return value.replace(/\\s+/g, ' ');
+                        }
+                        return '';
+                      };
+                      const title = content('meta[property="og:title"]') || text([
+                        'h1[itemprop="name"]', '[data-testid*="title"]', 'main h1', 'h1'
+                      ]);
+                      const description = content('meta[property="og:description"]') ||
+                        content('meta[name="description"]') || text([
+                          '[itemprop="description"]', '[data-testid*="description"]',
+                          '[class*="description"]'
+                        ]);
+                      const priceAmount = content('meta[itemprop="price"]') ||
+                        content('meta[property="product:price:amount"]');
+                      const priceCurrency = content('meta[itemprop="priceCurrency"]') ||
+                        content('meta[property="product:price:currency"]');
+                      const priceText = text([
+                        '[itemprop="price"]', '[data-testid*="price"]',
+                        '[class*="price-tag"]', '[class*="price"]'
+                      ]);
+                      const images = [];
+                      const add = (value) => {
+                        if (value && !images.includes(value)) images.push(value);
+                      };
+                      add(content('meta[property="og:image"]'));
+                      add(content('meta[name="twitter:image"]'));
+                      for (const image of document.querySelectorAll('main img, [role="main"] img, img[itemprop="image"]')) {
+                        if (image.naturalWidth >= 160 || image.naturalHeight >= 160 || image.alt?.includes(title)) {
+                          add(image.currentSrc || image.dataset.zoomImage || image.dataset.src || image.src);
+                        }
+                        if (images.length >= 20) break;
+                      }
+                      return {title, description, priceAmount, priceCurrency, priceText, images};
+                    }
+                """)
+                html = augment_with_dom_snapshot(html, snapshot, final_url)
                 if len(html.encode('utf-8')) > MAX_HTML:
                     raise ImportErrorMessage('A página renderizada é grande demais para importar.')
                 return html
@@ -129,7 +235,7 @@ def fetch_rendered_html(url: str) -> str:
                 browser.close()
     except BrowserError as error:
         raise ImportErrorMessage(
-            'O navegador de captura não conseguiu abrir a página. Cole o HTML da página no campo opcional.'
+            'A inspeção automática pelo navegador não conseguiu abrir a página.'
         ) from error
 
 
@@ -311,7 +417,7 @@ def extract_product(url: str, html: str) -> dict:
     if not title and not images:
         raise ImportErrorMessage(
             'A página não trouxe dados do produto. A loja pode ter exigido login ou bloqueado a leitura. '
-            'Cole o HTML da página do produto no campo opcional e tente novamente.'
+            'A inspeção automática do conteúdo também não encontrou os dados.'
         )
     offers = product.get('offers') or {}
     if isinstance(offers, list):

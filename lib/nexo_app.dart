@@ -204,6 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }),
       );
       if (response.statusCode == 200) {
+        TextInput.finishAutofillContext(shouldSave: true);
         widget.onAuthenticated();
         return;
       }
@@ -326,6 +327,8 @@ class _LoginScreenState extends State<LoginScreen> {
             TextFormField(
               controller: username,
               autofillHints: const [AutofillHints.username],
+              autocorrect: false,
+              enableSuggestions: false,
               textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
                 hintText: 'Digite seu usuário',
@@ -348,6 +351,8 @@ class _LoginScreenState extends State<LoginScreen> {
             TextFormField(
               controller: password,
               autofillHints: const [AutofillHints.password],
+              autocorrect: false,
+              enableSuggestions: false,
               obscureText: obscurePassword,
               onFieldSubmitted: (_) => submit(),
               decoration: InputDecoration(
@@ -3042,7 +3047,6 @@ class ImportDialog extends StatefulWidget {
 
 class _ImportDialogState extends State<ImportDialog> {
   final controller = TextEditingController();
-  final sourceHtmlController = TextEditingController();
   final nameController = TextEditingController();
   final priceController = TextEditingController();
   final brandController = TextEditingController();
@@ -3071,7 +3075,6 @@ class _ImportDialogState extends State<ImportDialog> {
   @override
   void dispose() {
     controller.dispose();
-    sourceHtmlController.dispose();
     nameController.dispose();
     priceController.dispose();
     brandController.dispose();
@@ -3238,144 +3241,185 @@ class _ImportDialogState extends State<ImportDialog> {
     );
   }
 
-  Widget linkStep() => Column(
-    key: const ValueKey(0),
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(
+  Widget importLoadingStep() => SizedBox(
+    key: const ValueKey('import-loading'),
+    height: 330,
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 76,
+            height: 76,
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: green.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(13),
+              color: green.withValues(alpha: .1),
+              shape: BoxShape.circle,
+              border: Border.all(color: green.withValues(alpha: .22)),
             ),
-            child: const Icon(Icons.add_link, color: green),
+            child: const CircularProgressIndicator(
+              strokeWidth: 3,
+              color: green,
+            ),
           ),
-          const SizedBox(width: 13),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 26),
+          const Text(
+            'Preparando seu produto',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Buscando informações, imagens e detalhes automaticamente.\nIsso pode levar alguns segundos.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: muted, height: 1.5),
+          ),
+          const SizedBox(height: 26),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: const SizedBox(
+              width: 220,
+              child: LinearProgressIndicator(
+                minHeight: 4,
+                color: purple,
+                backgroundColor: line,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget linkStep() => loading
+      ? importLoadingStep()
+      : Column(
+          key: const ValueKey(0),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Text(
-                  'Importar produto',
-                  style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: green.withValues(alpha: .12),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(Icons.add_link, color: green),
                 ),
-                Text(
-                  'Comece com um link autorizado',
-                  style: TextStyle(color: muted, fontSize: 12),
+                const SizedBox(width: 13),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Importar produto',
+                        style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        'Comece com um link autorizado',
+                        style: TextStyle(color: muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
                 ),
               ],
             ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
-        ],
-      ),
-      const SizedBox(height: 24),
-      const Text(
-        'URL do produto',
-        style: TextStyle(fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 8),
-      TextField(
-        controller: controller,
-        autofocus: true,
-        decoration: InputDecoration(
-          hintText: selfHosted
-              ? 'Cole o link da Shopee, Temu, AliExpress, Amazon ou Mercado Livre'
-              : 'https://www.marketplace.com.br/produto…',
-          prefixIcon: Icon(Icons.link),
-        ),
-      ),
-      const SizedBox(height: 13),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          const MarketBadge('mercado livre', Color(0xFFFFD95A)),
-          const MarketBadge('amazon', Color(0xFFFFB15A)),
-          const MarketBadge('shopee', Color(0xFFFF725E)),
-          const MarketBadge('temu', Color(0xFFFF8D54)),
-          const MarketBadge('aliexpress', Color(0xFFFF5E68)),
-        ],
-      ),
-      if (selfHosted)
-        TextButton.icon(
-          onPressed: () => launchUrl(
-            Uri.base.resolve('/api/mercadolivre/connect'),
-            mode: LaunchMode.externalApplication,
-          ),
-          icon: const Icon(Icons.link),
-          label: const Text('Conectar conta do Mercado Livre'),
-        ),
-      if (selfHosted) ...[
-        const SizedBox(height: 10),
-        TextField(
-          controller: sourceHtmlController,
-          minLines: 2,
-          maxLines: 4,
-          decoration: const InputDecoration(
-            labelText: 'HTML da página (opcional)',
-            hintText:
-                'Cole o DOM capturado no inspetor se a leitura automática for bloqueada.',
-            helperText:
-                'No navegador da loja: F12 → Elements/Elementos → copie o outerHTML do elemento <html>.',
-            helperMaxLines: 2,
-          ),
-        ),
-      ],
-      const SizedBox(height: 22),
-      Container(
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: purple.withValues(alpha: .08),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.info_outline, color: purple, size: 20),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'A importação consulta a API disponível ou captura a página renderizada no navegador. Se a loja bloquear a leitura, cole o HTML copiado pelo inspetor F12. Revise os direitos de uso antes de publicar.',
-                style: TextStyle(color: muted, fontSize: 12),
+            const SizedBox(height: 24),
+            const Text(
+              'URL do produto',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: selfHosted
+                    ? 'Cole o link da Shopee, Temu, AliExpress, Amazon ou Mercado Livre'
+                    : 'https://www.marketplace.com.br/produto…',
+                prefixIcon: Icon(Icons.link),
+              ),
+            ),
+            const SizedBox(height: 13),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                const MarketBadge('mercado livre', Color(0xFFFFD95A)),
+                const MarketBadge('amazon', Color(0xFFFFB15A)),
+                const MarketBadge('shopee', Color(0xFFFF725E)),
+                const MarketBadge('temu', Color(0xFFFF8D54)),
+                const MarketBadge('aliexpress', Color(0xFFFF5E68)),
+              ],
+            ),
+            if (selfHosted)
+              TextButton.icon(
+                onPressed: () => launchUrl(
+                  Uri.base.resolve('/api/mercadolivre/connect'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                icon: const Icon(Icons.link),
+                label: const Text('Conectar conta do Mercado Livre'),
+              ),
+            const SizedBox(height: 22),
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                color: purple.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, color: purple, size: 20),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'A Nexo busca automaticamente as informações disponíveis do produto. Você poderá revisar e editar tudo antes de publicar.',
+                      style: TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 22),
+            if (importError != null) ...[
+              Text(
+                importError!,
+                style: const TextStyle(color: red, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+            ],
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: loading ? null : simulate,
+                icon: loading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.auto_awesome),
+                label: Text(
+                  loading ? 'Buscando informações…' : 'Importar informações',
+                ),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
               ),
             ),
           ],
-        ),
-      ),
-      const SizedBox(height: 22),
-      if (importError != null) ...[
-        Text(importError!, style: const TextStyle(color: red, fontSize: 12)),
-        const SizedBox(height: 10),
-      ],
-      SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: loading ? null : simulate,
-          icon: loading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.auto_awesome),
-          label: Text(
-            loading ? 'Buscando informações…' : 'Importar informações',
-          ),
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-          ),
-        ),
-      ),
-    ],
-  );
+        );
 
   Future<void> simulate() async {
     if (selfHosted) {
@@ -3394,11 +3438,7 @@ class _ImportDialogState extends State<ImportDialog> {
         final response = await http.post(
           Uri.base.resolve('/api/products/import'),
           headers: const {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'url': controller.text.trim(),
-            if (sourceHtmlController.text.trim().isNotEmpty)
-              'html': sourceHtmlController.text,
-          }),
+          body: jsonEncode({'url': controller.text.trim()}),
         );
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         if (response.statusCode != 200) {
@@ -3408,10 +3448,7 @@ class _ImportDialogState extends State<ImportDialog> {
         setState(() => setImportedPage(ProductPageData.fromJson(data)));
       } catch (error) {
         if (mounted) {
-          setState(
-            () =>
-                importError = error.toString().replaceFirst('Exception: ', ''),
-          );
+          setState(() => importError = friendlyImportError(error));
         }
       } finally {
         if (mounted) setState(() => loading = false);
@@ -3429,6 +3466,22 @@ class _ImportDialogState extends State<ImportDialog> {
         loading = false;
       });
     }
+  }
+
+  String friendlyImportError(Object error) {
+    final message = error.toString().replaceFirst('Exception: ', '');
+    final normalized = message.toLowerCase();
+    if (normalized.contains('conecte sua conta') ||
+        normalized.contains('autorização do mercado livre')) {
+      return 'Conecte sua conta do Mercado Livre e tente novamente.';
+    }
+    if (normalized.contains('bloque') ||
+        normalized.contains('html') ||
+        normalized.contains('navegador') ||
+        normalized.contains('inspeção')) {
+      return 'Não conseguimos obter os dados deste produto automaticamente. Confira o link ou tente novamente em alguns minutos.';
+    }
+    return message;
   }
 
   void openPagePreview() {

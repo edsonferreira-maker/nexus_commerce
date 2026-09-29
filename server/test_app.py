@@ -132,6 +132,19 @@ class NexoHttpTest(unittest.TestCase):
             self.request('/api/auth/session', headers={'Cookie': cookie})
         self.assertEqual(failure.exception.code, 401)
 
+    def test_admin_session_survives_server_restart_and_rejects_tampering(self):
+        token = self.server.create_admin_session()
+        replacement = NexoServer(
+            ('127.0.0.1', 0), self.server.web_root, self.server.data_root,
+            'secret', geo_locator=FakeGeo(),
+        )
+        try:
+            self.assertTrue(replacement.has_admin_session(token))
+            tampered = token[:-1] + ('0' if token[-1] != '0' else '1')
+            self.assertFalse(replacement.has_admin_session(tampered))
+        finally:
+            replacement.server_close()
+
     def test_rejects_other_origin_and_other_pages(self):
         payload = json.dumps({'page': PUBLISHED_PAGE, 'kind': 'view'}).encode()
         with self.assertRaises(urllib.error.HTTPError) as failure:

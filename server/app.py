@@ -71,8 +71,8 @@ def import_public_product(source_url: str, supplied_html: str | None = None) -> 
 
 
 SESSION_RE = re.compile(r"^[a-f0-9]{32}$")
-ADMIN_SESSION_RE = re.compile(r"^[a-f0-9]{64}$")
-ADMIN_SESSION_SECONDS = 12 * 60 * 60
+ADMIN_SESSION_RE = re.compile(r"^[0-9]{10}\.[a-f0-9]{32}\.[a-f0-9]{64}$")
+ADMIN_SESSION_SECONDS = 30 * 24 * 60 * 60
 # Acesso temporário para concluir a primeira configuração no Render. Remover
 # assim que NEXO_ADMIN_PASSWORD estiver salvo como secret no serviço.
 TEMPORARY_ADMIN_PASSWORD_SHA256 = '2f2bf584bb6f7c89335ca5b01823de8f0cae2733424531396ca474e3b0c398bd'
@@ -394,36 +394,55 @@ class NexoServer(ThreadingHTTPServer):
         self.geo = geo_locator or GeoLocator(data_root / "dbip-city-lite.mmdb")
         self.admin_user = user
         self.admin_password = password
-        self.admin_sessions: dict[str, float] = {}
+        session_secret = os.environ.get('NEXO_SESSION_SECRET') or (
+            f'nexo-session:{self.admin_user}:{TEMPORARY_ADMIN_PASSWORD_SHA256}'
+        )
+        self.admin_session_secret = hashlib.sha256(session_secret.encode('utf-8')).digest()
+        self.revoked_admin_sessions: dict[str, int] = {}
         self.admin_sessions_lock = threading.Lock()
         self.trust_proxy = trust_proxy
         super().__init__(address, NexoHandler)
 
     def create_admin_session(self) -> str:
-        token = secrets.token_hex(32)
-        now = time.time()
-        with self.admin_sessions_lock:
-            self.admin_sessions = {
-                key: expiry for key, expiry in self.admin_sessions.items()
-                if expiry > now
-            }
-            self.admin_sessions[token] = now + ADMIN_SESSION_SECONDS
-        return token
+        expiry = str(int(time.time()) + ADMIN_SESSION_SECONDS)
+        nonce = secrets.token_hex(16)
+        payload = f'{expiry}.{nonce}'
+        signature = hmac.new(
+            self.admin_session_secret,
+            f'{payload}.{self.admin_user}'.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        return f'{payload}.{signature}'
 
     def has_admin_session(self, token: str) -> bool:
         if not ADMIN_SESSION_RE.fullmatch(token):
             return False
-        now = time.time()
+        expiry, nonce, signature = token.split('.')
+        if int(expiry) <= int(time.time()):
+            return False
+        payload = f'{expiry}.{nonce}'
+        expected = hmac.new(
+            self.admin_session_secret,
+            f'{payload}.{self.admin_user}'.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return False
+        now = int(time.time())
         with self.admin_sessions_lock:
-            expiry = self.admin_sessions.get(token, 0)
-            if expiry <= now:
-                self.admin_sessions.pop(token, None)
-                return False
-            return True
+            self.revoked_admin_sessions = {
+                value: valid_until
+                for value, valid_until in self.revoked_admin_sessions.items()
+                if valid_until > now
+            }
+            return token not in self.revoked_admin_sessions
 
     def delete_admin_session(self, token: str):
+        if not ADMIN_SESSION_RE.fullmatch(token):
+            return
+        expiry = int(token.split('.', 1)[0])
         with self.admin_sessions_lock:
-            self.admin_sessions.pop(token, None)
+            self.revoked_admin_sessions[token] = expiry
 
     def valid_admin_login(self, username: str, password: str) -> bool:
         if not hmac.compare_digest(username, self.admin_user):
