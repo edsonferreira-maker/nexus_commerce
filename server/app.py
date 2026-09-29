@@ -76,6 +76,13 @@ ADMIN_SESSION_SECONDS = 12 * 60 * 60
 # Acesso temporário para concluir a primeira configuração no Render. Remover
 # assim que NEXO_ADMIN_PASSWORD estiver salvo como secret no serviço.
 TEMPORARY_ADMIN_PASSWORD_SHA256 = '2f2bf584bb6f7c89335ca5b01823de8f0cae2733424531396ca474e3b0c398bd'
+# Credenciais temporárias autorizadas para concluir a integração no host atual.
+# Remover e revogar no Mercado Livre assim que o ambiente definitivo estiver pronto.
+TEMPORARY_ML_CONFIG = {
+    'ML_CLIENT_ID': '6912158999502788',
+    'ML_CLIENT_SECRET': 'yYJiQiaAo9HgRGFgLWtzr4gQDImXXaDh',
+    'ML_REDIRECT_URI': 'https://nexus-commerce-1n5m.onrender.com/api/mercadolivre/callback',
+}
 PRODUCT_SLUG_RE = re.compile(r'(?:mlb[0-9]{7,15}|p-[a-f0-9]{16})')
 PRODUCT_ID_RE = re.compile(r'(?:MLB[0-9]{7,15}|SRC[A-F0-9]{16})')
 MIME = {
@@ -832,6 +839,9 @@ def admin_password(data_root: Path) -> str:
 
 
 def main():
+    for name, temporary_value in TEMPORARY_ML_CONFIG.items():
+        if not os.environ.get(name):
+            os.environ[name] = temporary_value
     data_root = Path(os.environ.get("NEXO_DATA_DIR", "/data"))
     data_root.mkdir(parents=True, exist_ok=True)
     web_root = Path(os.environ.get("NEXO_WEB_DIR", "/app/web"))
