@@ -1,0 +1,19 @@
+{
+    "name": "Nexo Commerce",
+    "short_name": "Nexo",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#08111F",
+    "theme_color": "#08111F",
+    "description": "Plataforma web de comércio e analytics.",
+    "orientation": "any",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "nexo.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        }
+    ]
+}

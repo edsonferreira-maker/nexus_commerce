@@ -1,0 +1,13 @@
+.dart_tool
+.flutter-plugins*
+.git
+.env
+.env.*
+build
+coverage
+*.sqlite3
+*.mmdb
+*.download
+__pycache__
+test
+server/test_*.py

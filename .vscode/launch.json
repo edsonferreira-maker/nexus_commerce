@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Nexo Commerce (app + API local)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "python3 scripts/run_local.py",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

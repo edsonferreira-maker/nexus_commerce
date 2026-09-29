@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: nexo-commerce-preview
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"
+      - key: GEOIP_AUTO_DOWNLOAD
+        value: "1"
+      - key: NEXO_ADMIN_USER
+        value: admin
+      - key: NEXO_ADMIN_PASSWORD
+        sync: false
+      - key: ML_CLIENT_ID
+        sync: false
+      - key: ML_CLIENT_SECRET
+        sync: false
+      - key: ML_REDIRECT_URI
+        sync: false
