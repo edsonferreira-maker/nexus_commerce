@@ -15,7 +15,8 @@ from page_import import (
 class PageImportTest(unittest.TestCase):
     def test_mercado_livre_retries_as_link_preview_after_cloud_block(self):
         class Response:
-            def __init__(self):
+            def __init__(self, url):
+                self.url = url
                 self.headers = Message()
                 self.headers['Content-Type'] = 'text/html; charset=utf-8'
 
@@ -26,7 +27,7 @@ class PageImportTest(unittest.TestCase):
                 return False
 
             def geturl(self):
-                return 'https://produto.mercadolivre.com.br/MLB-1234567-produto-_JM'
+                return self.url
 
             def read(self, _limit):
                 return b'<html><h1>Produto</h1></html>'
@@ -36,8 +37,12 @@ class PageImportTest(unittest.TestCase):
             def open(self, request, timeout):
                 requests.append((request, timeout))
                 if len(requests) == 1:
-                    raise urllib.error.HTTPError(request.full_url, 403, 'Forbidden', {}, None)
-                return Response()
+                    return Response(
+                        'https://www.mercadolivre.com.br/gz/account-verification'
+                    )
+                return Response(
+                    'https://produto.mercadolivre.com.br/MLB-1234567-produto-_JM'
+                )
 
         with patch('page_import.urllib.request.build_opener', return_value=Opener()):
             html = fetch_html(

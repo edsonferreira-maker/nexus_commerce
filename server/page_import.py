@@ -66,8 +66,8 @@ def fetch_html(url: str) -> str:
             return raw.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
     try:
         return read('Mozilla/5.0 (compatible; NexoCommerce/1.0)')
-    except urllib.error.HTTPError as error:
-        if market == 'mercadolivre' and error.code in (403, 429):
+    except (urllib.error.HTTPError, OSError, UnicodeError, ImportErrorMessage) as error:
+        if market == 'mercadolivre':
             try:
                 # O Mercado Livre publica metadados completos para agentes de
                 # pré-visualização de links mesmo quando bloqueia IPs de nuvem.
@@ -75,13 +75,17 @@ def fetch_html(url: str) -> str:
                     'facebookexternalhit/1.1 '
                     '(+https://nexus-commerce-1n5m.onrender.com)'
                 )
-            except (urllib.error.HTTPError, OSError, UnicodeError):
+            except (urllib.error.HTTPError, OSError, UnicodeError, ImportErrorMessage):
                 pass
+        if isinstance(error, ImportErrorMessage):
+            raise error
+        if not isinstance(error, urllib.error.HTTPError):
+            raise ImportErrorMessage(
+                'Não foi possível ler a página diretamente. A inspeção pelo navegador será tentada automaticamente.'
+            ) from error
         raise ImportErrorMessage(
             f'A loja bloqueou a leitura direta (HTTP {error.code}). A inspeção pelo navegador será tentada automaticamente.'
         ) from error
-    except (OSError, UnicodeError) as error:
-        raise ImportErrorMessage('Não foi possível ler a página diretamente. A inspeção pelo navegador será tentada automaticamente.') from error
 
 
 def augment_with_dom_snapshot(html: str, snapshot: dict, url: str) -> str:
