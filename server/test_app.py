@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from app import NexoServer, TrafficStore
 from page_import import ImportErrorMessage
+from payments import PixzyConfig
 
 PUBLISHED_PAGE = '/p/mlb1234567'
 
@@ -28,6 +29,32 @@ class FakeGeo:
             'lat': -23.55,
             'lon': -46.63,
         }
+
+
+class FakePaymentGateway:
+    def __init__(self):
+        self.created = []
+        self.transactions = {}
+
+    def create_payment(self, payload):
+        self.created.append(payload)
+        transaction_id = f'tx-{len(self.created)}'
+        transaction = {
+            'transaction_id': transaction_id,
+            'id': transaction_id,
+            'amount': payload['amount'],
+            'status': 'pending',
+            'br_code': '000201-pix-code',
+            'metadata': payload['metadata'],
+        }
+        self.transactions[transaction_id] = transaction
+        return transaction
+
+    def get_payment(self, transaction_id):
+        return self.transactions[transaction_id]
+
+    def get_account(self):
+        return {'id': 'account-1', 'balance': 10000}
 
 
 class TrafficStoreTest(unittest.TestCase):
@@ -68,7 +95,7 @@ class NexoHttpTest(unittest.TestCase):
             '</form>'
         )
         self.server = NexoServer(('127.0.0.1', 0), web, root / 'data', 'secret', geo_locator=FakeGeo())
-        self.server.store.save_product({'id': 'MLB1234567', 'slug': 'mlb1234567', 'name': 'Teste'})
+        self.server.store.save_product({'id': 'MLB1234567', 'slug': 'mlb1234567', 'name': 'Teste', 'rightsConfirmed': True})
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.server.server_address[1]}'
@@ -82,6 +109,180 @@ class NexoHttpTest(unittest.TestCase):
     def request(self, path, data=None, headers=None):
         request = urllib.request.Request(self.url + path, data=data, headers=headers or {})
         return urllib.request.urlopen(request)
+
+    def configure_payments(self):
+        gateway = FakePaymentGateway()
+        self.server.pixzy_config = PixzyConfig(
+            'server-only-token', webhook_url=self.url + '/api/webhooks/pixzypay/transactions',
+        )
+        self.server.payment_gateway = gateway
+        self.server.store.save_product({
+            'id': 'MLB1234567', 'slug': 'mlb1234567', 'name': 'Produto teste',
+            'price': 'R$ 19,90', 'stock': 5, 'redirect': False, 'rightsConfirmed': True,
+        })
+        return gateway
+
+    def create_payment(self, client_key='checkout_key_123456'):
+        payload = json.dumps({
+            'quantity': 2,
+            'idempotencyKey': client_key,
+            'customer': {
+                'name': 'Cliente Teste', 'email': 'cliente@example.com',
+                'document': '123.456.789-00', 'phone': '(11) 99999-9999',
+            },
+        }).encode()
+        with self.request(
+            '/api/products/mlb1234567/checkout', payload, {'Content-Type': 'application/json'},
+        ) as response:
+            return response.status, json.load(response)
+
+    def test_pixzy_checkout_uses_server_price_and_is_idempotent(self):
+        gateway = self.configure_payments()
+        status, payment = self.create_payment()
+        self.assertEqual(status, 201)
+        self.assertEqual(payment['amount'], 3980)
+        self.assertEqual(payment['status'], 'pending')
+        self.assertEqual(payment['brCode'], '000201-pix-code')
+        _, duplicate = self.create_payment()
+        self.assertEqual(duplicate['id'], payment['id'])
+        self.assertEqual(len(gateway.created), 1)
+        self.assertEqual(gateway.created[0]['amount'], 3980)
+        self.assertEqual(gateway.created[0]['items'][0]['price'], 1990)
+        self.assertNotIn('server-only-token', json.dumps(payment))
+
+    def test_reconciliation_and_idempotent_paid_webhook(self):
+        gateway = self.configure_payments()
+        _, created = self.create_payment()
+        stored = self.server.store.get_payment(created['id'])
+        transaction_id = stored['provider_transaction_id']
+        gateway.transactions[transaction_id]['status'] = 'paid'
+
+        with self.request(
+            f"/api/payments/{created['id']}/reconcile", b'{}', {'Content-Type': 'application/json'},
+        ) as response:
+            self.assertEqual(json.load(response)['status'], 'paid')
+
+        webhook = json.dumps({
+            'event': 'paid',
+            'transaction': {
+                'id': transaction_id, 'amount': 3980, 'status': 'paid',
+                'metadata': {'order_id': created['orderId']}, 'items': [],
+            },
+        }).encode()
+        with self.request(
+            '/api/webhooks/pixzypay/transactions', webhook, {'Content-Type': 'application/json'},
+        ) as response:
+            self.assertTrue(json.load(response)['processed'])
+        with self.request(
+            '/api/webhooks/pixzypay/transactions', webhook, {'Content-Type': 'application/json'},
+        ) as response:
+            self.assertFalse(json.load(response)['processed'])
+        with self.server.store.connect() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM payment_webhook_events').fetchone()[0], 1)
+
+    def test_webhook_rejects_amount_mismatch(self):
+        gateway = self.configure_payments()
+        _, created = self.create_payment()
+        stored = self.server.store.get_payment(created['id'])
+        transaction_id = stored['provider_transaction_id']
+        gateway.transactions[transaction_id]['status'] = 'paid'
+        webhook = json.dumps({
+            'event': 'paid',
+            'transaction': {
+                'id': transaction_id, 'amount': 1, 'status': 'paid',
+                'metadata': {'order_id': created['orderId']},
+            },
+        }).encode()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request('/api/webhooks/pixzypay/transactions', webhook, {'Content-Type': 'application/json'})
+        self.assertEqual(failure.exception.code, 400)
+
+    def test_webhook_applies_expired_and_failed_statuses(self):
+        gateway = self.configure_payments()
+        for index, status in enumerate(('expired', 'failed')):
+            _, created = self.create_payment(f'checkout_terminal_{index:02d}')
+            stored = self.server.store.get_payment(created['id'])
+            transaction_id = stored['provider_transaction_id']
+            gateway.transactions[transaction_id]['status'] = status
+            webhook = json.dumps({
+                'event': status,
+                'transaction': {
+                    'id': transaction_id, 'amount': 3980, 'status': status,
+                    'metadata': {'order_id': created['orderId']},
+                },
+            }).encode()
+            with self.request(
+                '/api/webhooks/pixzypay/transactions', webhook, {'Content-Type': 'application/json'},
+            ) as response:
+                self.assertTrue(json.load(response)['processed'])
+            with self.request(f"/api/payments/{created['id']}") as response:
+                self.assertEqual(json.load(response)['status'], status)
+
+    def test_webhook_rejects_unknown_transaction(self):
+        self.configure_payments()
+        webhook = json.dumps({
+            'event': 'paid',
+            'transaction': {
+                'id': 'unknown', 'amount': 3980, 'status': 'paid',
+                'metadata': {'order_id': 'unknown'},
+            },
+        }).encode()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request('/api/webhooks/pixzypay/transactions', webhook, {'Content-Type': 'application/json'})
+        self.assertEqual(failure.exception.code, 404)
+
+    def test_payment_configuration_is_admin_only(self):
+        self.configure_payments()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request('/api/payments/config')
+        self.assertEqual(failure.exception.code, 401)
+        authorization = base64.b64encode(b'admin:secret').decode()
+        with self.request(
+            '/api/payments/config', headers={'Authorization': f'Basic {authorization}'},
+        ) as response:
+            config = json.load(response)
+        self.assertTrue(config['configured'])
+        self.assertNotIn('server-only-token', json.dumps(config))
+
+    def test_admin_can_save_pixzy_token_without_exposing_it(self):
+        self.server.pixzy_managed_by_environment = False
+        authorization = base64.b64encode(b'admin:secret').decode()
+        headers = {
+            'Authorization': f'Basic {authorization}',
+            'Content-Type': 'application/json',
+        }
+        payload = json.dumps({
+            'apiToken': 'new-server-secret-token',
+            'baseUrl': 'https://app.pixzypay.com/api',
+            'webhookUrl': self.url + '/api/webhooks/pixzypay/transactions',
+        }).encode()
+        with self.request('/api/payments/config', payload, headers) as response:
+            saved = json.load(response)
+        self.assertTrue(saved['configured'])
+        self.assertNotIn('new-server-secret-token', json.dumps(saved))
+        stored = self.server.store.get_payment_config()
+        self.assertEqual(stored['api_token'], 'new-server-secret-token')
+
+        with self.request(
+            '/api/payments/config', headers={'Authorization': f'Basic {authorization}'},
+        ) as response:
+            visible = json.load(response)
+        self.assertNotIn('new-server-secret-token', json.dumps(visible))
+
+    def test_payment_config_rejects_insecure_remote_urls(self):
+        self.server.pixzy_managed_by_environment = False
+        authorization = base64.b64encode(b'admin:secret').decode()
+        payload = json.dumps({
+            'apiToken': 'new-server-secret-token',
+            'baseUrl': 'http://evil.example/api',
+            'webhookUrl': 'https://shop.example/webhook',
+        }).encode()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request(
+                '/api/payments/config', payload,
+                {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'},
+            )
+        self.assertEqual(failure.exception.code, 400)
 
     def test_public_page_tracks_visits_and_admin_api_is_private(self):
         with self.request(PUBLISHED_PAGE) as response:
@@ -116,18 +317,6 @@ class NexoHttpTest(unittest.TestCase):
                 {'Content-Type': 'application/json'},
             )
         self.assertEqual(failure.exception.code, 401)
-
-        temporary_password = bytes.fromhex(
-            '436f72696e746869616e7331323334'
-        ).decode()
-        temporary = json.dumps({
-            'username': 'admin', 'password': temporary_password,
-        }).encode()
-        with self.request(
-            '/api/auth/login', temporary,
-            {'Content-Type': 'application/json'},
-        ) as response:
-            self.assertEqual(response.status, 200)
 
         credentials = json.dumps({'username': 'admin', 'password': 'secret'}).encode()
         with self.request(
@@ -259,7 +448,7 @@ class NexoHttpTest(unittest.TestCase):
         }
         authorization = base64.b64encode(b'admin:secret').decode()
         headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
-        with patch('app.fetch_product', return_value=product):
+        with patch('universal_import.fetch_product', return_value=product):
             with self.request(
                 '/api/products/import',
                 json.dumps({'url': 'https://www.mercadolivre.com.br/produto/MLB7654321'}).encode(),
@@ -268,7 +457,7 @@ class NexoHttpTest(unittest.TestCase):
                 self.assertEqual(json.load(response)['name'], 'Produto real')
         with self.request(
             '/api/products/publish',
-            json.dumps({'id': 'MLB7654321', 'redirect': True}).encode(),
+            json.dumps({'id': 'MLB7654321', 'redirect': True, 'rightsConfirmed': True}).encode(),
             headers,
         ) as response:
             self.assertEqual(json.load(response)['slug'], 'mlb7654321')
@@ -296,7 +485,7 @@ class NexoHttpTest(unittest.TestCase):
             'https://www.mercadolivre.com.br/capa/up/MLBU4195394312?'
             'pdp_filters=item_id:MLB4831773371#is_advertising=true'
         )
-        with patch('app.fetch_product', return_value=product) as fetch:
+        with patch('universal_import.fetch_product', return_value=product) as fetch:
             with self.request(
                 '/api/products/import', json.dumps({'url': url}).encode(), headers,
             ) as response:
@@ -304,6 +493,7 @@ class NexoHttpTest(unittest.TestCase):
         self.assertEqual(fetch.call_args.args[0], 'MLB4831773371')
 
     def test_creates_editable_page_from_marketplace_html(self):
+        self.server.connections.write('admin', 'generic', {'allowedHosts': ['www.temu.com'], 'mediaHosts': ['images.example.com'], 'authorizationConfirmed': True})
         authorization = base64.b64encode(b'admin:secret').decode()
         headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
         html = (
@@ -312,7 +502,7 @@ class NexoHttpTest(unittest.TestCase):
         )
         with self.request(
             '/api/products/import',
-            json.dumps({'url': 'https://www.temu.com/goods.html', 'html': html}).encode(),
+            json.dumps({'url': 'https://www.temu.com/goods.html', 'html': html, 'authorizationConfirmed': True}).encode(),
             headers,
         ) as response:
             draft = json.load(response)
@@ -320,7 +510,7 @@ class NexoHttpTest(unittest.TestCase):
         with self.request(
             '/api/products/publish',
             json.dumps({
-                'id': draft['id'], 'redirect': True,
+                'id': draft['id'], 'redirect': True, 'rightsConfirmed': True,
                 'page': {
                     'storeName': 'Minha vitrine',
                     'name': 'Minha página da luminária', 'price': 'R$ 89,90',
@@ -339,7 +529,7 @@ class NexoHttpTest(unittest.TestCase):
         with self.request(
             '/api/products/publish',
             json.dumps({
-                'id': draft['id'], 'redirect': True,
+                'id': draft['id'], 'redirect': True, 'rightsConfirmed': True,
                 'page': {
                     'storeName': 'Minha vitrine', 'name': 'Título revisado',
                     'price': 'R$ 79,90', 'description': 'Texto atualizado',
@@ -368,9 +558,9 @@ class NexoHttpTest(unittest.TestCase):
                     headers,
                 )
         self.assertEqual(failure.exception.code, 400)
-        self.assertIn('Leitura bloqueada', json.load(failure.exception)['message'])
+        self.assertIn('não autorizado', json.load(failure.exception)['message'])
 
-    def test_uses_rendered_dom_when_initial_html_has_no_product(self):
+    def test_authorized_html_uses_native_parser_without_browser(self):
         authorization = base64.b64encode(b'admin:secret').decode()
         headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
         rendered = (
@@ -380,59 +570,36 @@ class NexoHttpTest(unittest.TestCase):
             '"offers":{"price":"129.90","priceCurrency":"BRL"}}'
             '</script>'
         )
-        with patch('app.fetch_html', return_value='<html></html>'), patch(
-            'app.fetch_rendered_html', return_value=rendered
-        ) as capture:
+        self.server.connections.write('admin', 'generic', {'allowedHosts': ['www.temu.com'], 'mediaHosts': ['images.example.com'], 'authorizationConfirmed': True})
+        with patch('universal_import.safe_fetch', return_value=rendered), patch('app.fetch_rendered_html') as capture:
             with self.request(
                 '/api/products/import',
                 json.dumps({'url': 'https://www.temu.com/produto'}).encode(),
                 headers,
             ) as response:
                 draft = json.load(response)
-        capture.assert_called_once()
+        capture.assert_not_called()
         self.assertEqual(draft['name'], 'Câmera renderizada')
         self.assertEqual(draft['price'], 'R$ 129,90')
 
-    def test_ml_uses_public_dom_when_oauth_is_not_configured(self):
+    def test_ml_requires_oauth_without_html_or_permalink_fallback(self):
         authorization = base64.b64encode(b'admin:secret').decode()
         headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
-        html = (
-            '<meta property="og:title" content="Câmera Intelbras">'
-            '<meta property="og:image" content="https://http2.mlstatic.com/camera.jpg">'
-        )
-        with patch('app.fetch_html', return_value=html), patch(
-            'app.fetch_rendered_html', side_effect=ImportErrorMessage('Captura indisponível.')
-        ):
-            with self.request(
-                '/api/products/import',
-                json.dumps({'url': 'https://www.mercadolivre.com.br/camera/p/MLB47535705'}).encode(),
-                headers,
-            ) as response:
-                draft = json.load(response)
-        self.assertEqual(draft['market'], 'Mercado Livre')
-        self.assertEqual(draft['name'], 'Câmera Intelbras')
-        self.assertTrue(draft['importNotice'])
-
-    def test_ml_uses_permalink_fallback_when_api_and_browser_are_blocked(self):
-        authorization = base64.b64encode(b'admin:secret').decode()
-        headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
-        with patch(
-            'app.fetch_html', side_effect=ImportErrorMessage('Leitura pública bloqueada.')
-        ), patch(
-            'app.fetch_rendered_html', side_effect=ImportErrorMessage('Navegador bloqueado.')
-        ):
-            with self.request(
-                '/api/products/import',
-                json.dumps({
-                    'url': 'https://produto.mercadolivre.com.br/MLB-6068020650-'
-                           'capa-iphone-16e-e-17e-magsafe-_JM'
-                }).encode(),
-                headers,
-            ) as response:
-                draft = json.load(response)
-        self.assertEqual(response.status, 200)
-        self.assertEqual(draft['name'], 'Capa iPhone 16e e 17e MagSafe')
-        self.assertNotIn('Conecte sua conta', draft['importNotice'])
+        for url, supplied in [
+            ('https://www.mercadolivre.com.br/camera/p/MLB47535705', None),
+            ('https://produto.mercadolivre.com.br/MLB-6068020650-capa-_JM', None),
+            ('https://produto.mercadolivre.com.br/MLB-6068020650', '<h1>Fake</h1>'),
+        ]:
+            with patch('app.fetch_html') as html, patch('app.fetch_rendered_html') as browser:
+                body = {'url': url}
+                if supplied:
+                    body['html'] = supplied
+                with self.assertRaises(urllib.error.HTTPError) as failure:
+                    self.request('/api/products/import', json.dumps(body).encode(), headers)
+                self.assertEqual(failure.exception.code, 400)
+                html.assert_not_called()
+                browser.assert_not_called()
+                failure.exception.close()
 
     def test_uploaded_photo_is_served_from_own_server(self):
         authorization = base64.b64encode(b'admin:secret').decode()
@@ -449,14 +616,14 @@ class NexoHttpTest(unittest.TestCase):
         headers = {'Authorization': f'Basic {authorization}', 'Content-Type': 'application/json'}
         with self.request(
             '/api/products/import',
-            json.dumps({'url': 'https://www.amazon.com.br/dp/B012345678', 'html': '<meta property="og:title" content="Produto"><meta property="og:image" content="https://images.example.com/p.jpg">'}).encode(),
+            json.dumps({'url': 'https://www.amazon.com.br/dp/B012345678', 'authorizationConfirmed': True, 'html': '<meta property="og:title" content="Produto"><meta property="og:image" content="https://images.example.com/p.jpg">'}).encode(),
             headers,
         ) as response:
             draft = json.load(response)
         with self.request(
             '/api/products/publish',
             json.dumps({
-                'id': draft['id'], 'redirect': True,
+                'id': draft['id'], 'redirect': True, 'rightsConfirmed': True,
                 'page': {'storeName': 'Minha loja', 'name': 'Produto', 'price': 'R$ 10,00', 'images': [path]},
             }).encode(),
             headers,

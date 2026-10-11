@@ -14,43 +14,11 @@ from page_import import (
 
 
 class PageImportTest(unittest.TestCase):
-    def test_mercado_livre_retries_as_link_preview_after_cloud_block(self):
-        class Response:
-            def __init__(self, url):
-                self.url = url
-                self.headers = Message()
-                self.headers['Content-Type'] = 'text/html; charset=utf-8'
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def geturl(self):
-                return self.url
-
-            def read(self, _limit):
-                return b'<html><h1>Produto</h1></html>'
-
-        requests = []
-        class Opener:
-            def open(self, request, timeout):
-                requests.append((request, timeout))
-                if len(requests) == 1:
-                    return Response(
-                        'https://www.mercadolivre.com.br/gz/account-verification'
-                    )
-                return Response(
-                    'https://produto.mercadolivre.com.br/MLB-1234567-produto-_JM'
-                )
-
-        with patch('page_import.urllib.request.build_opener', return_value=Opener()):
-            html = fetch_html(
-                'https://produto.mercadolivre.com.br/MLB-1234567-produto-_JM'
-            )
-        self.assertIn('<h1>Produto</h1>', html)
-        self.assertIn('facebookexternalhit', requests[1][0].get_header('User-agent'))
+    def test_mercado_livre_html_fetch_is_forbidden(self):
+        with patch('page_import.urllib.request.build_opener') as opener:
+            with self.assertRaisesRegex(ImportErrorMessage, 'API autorizada'):
+                fetch_html('https://produto.mercadolivre.com.br/MLB-1234567')
+            opener.assert_not_called()
 
     def test_extracts_product_metadata_for_supported_markets(self):
         cases = [
@@ -118,8 +86,9 @@ class PageImportTest(unittest.TestCase):
         self.assertEqual(product['description'], 'Detalhes encontrados na página visível.')
 
     def test_rejects_arbitrary_urls_and_missing_product_data(self):
+        self.assertEqual(market_for_url('https://amazon.com.br.evil.example/dp/B012345678')[0], 'generic')
         with self.assertRaises(ImportErrorMessage):
-            market_for_url('https://amazon.com.br.evil.example/dp/B012345678')
+            market_for_url('https://127.0.0.1/dp/B012345678')
         with self.assertRaisesRegex(ImportErrorMessage, 'não trouxe dados do produto'):
             extract_product('https://www.amazon.com.br/dp/B012345678', '<html></html>')
 

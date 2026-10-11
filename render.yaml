@@ -22,3 +22,9 @@ services:
         sync: false
       - key: ML_REDIRECT_URI
         value: "https://nexus-commerce-1n5m.onrender.com/api/mercadolivre/callback"
+      - key: PIXZY_BASE_URL
+        value: "https://app.pixzypay.com/api"
+      - key: PIXZY_API_TOKEN
+        sync: false
+      - key: PIXZY_WEBHOOK_URL
+        value: "https://nexus-commerce-1n5m.onrender.com/api/webhooks/pixzypay/transactions"

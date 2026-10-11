@@ -32,25 +32,11 @@ class MercadoLivreTest(unittest.TestCase):
             'MLB4831773371',
         )
 
-    def test_catalog_link_uses_available_offer_and_catalog_reviews(self):
-        urls = []
-        def api(url, _token):
-            urls.append(url)
-            if '/products/' in url:
-                return {'buy_box_winner': {'item_id': 'MLB7654321'}}
-            if '/items/MLB7654321/description' in url:
-                return {'plain_text': 'Descrição'}
-            if '/items/' in url:
-                return {
-                    'id': 'MLB7654321', 'title': 'Produto', 'price': 10,
-                    'permalink': 'https://produto.mercadolivre.com.br/MLB-7654321',
-                    'pictures': [{'secure_url': 'https://http2.mlstatic.com/a.jpg'}],
-                }
-            return {'reviews': []}
-        with patch('mercadolivre.request_json', side_effect=api):
-            product = fetch_product('MLB1234567', 'token', catalog=True)
-        self.assertEqual(product['id'], 'MLB7654321')
-        self.assertTrue(any('catalog_product_id=MLB1234567' in url for url in urls))
+    def test_catalog_link_requires_explicit_listing(self):
+        with patch('mercadolivre.request_json') as api:
+            with self.assertRaisesRegex(MercadoLivreError, 'Selecione'):
+                fetch_product('MLB1234567', 'token', catalog=True)
+            api.assert_not_called()
 
     def test_catalog_link_prefers_selected_listing_when_it_matches(self):
         urls = []
@@ -100,7 +86,7 @@ class MercadoLivreTest(unittest.TestCase):
             {
                 'id': 'MLB1234567890',
                 'title': 'Fone real',
-                'price': 1234.5,
+                'price': 1234.5, 'currency_id': 'BRL',
                 'permalink': 'https://produto.mercadolivre.com.br/MLB-1234567890',
                 'pictures': [
                     {'secure_url': 'https://http2.mlstatic.com/a.jpg'},

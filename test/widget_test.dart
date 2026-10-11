@@ -125,6 +125,18 @@ void main() {
     expect(snapshot.cities.single.name, 'Recife');
   });
 
+  test('interpreta o contrato público de pagamento Pix', () {
+    final payment = PixPayment.fromJson({
+      'id': 'payment-id',
+      'amount': 1990,
+      'status': 'pending',
+      'brCode': '000201-pix',
+    });
+    expect(payment.amount, 1990);
+    expect(payment.status, 'pending');
+    expect(payment.brCode, '000201-pix');
+  });
+
   test('usa fotos e comentários recebidos no produto importado', () {
     final product = ProductPageData.fromJson({
       'id': 'MLB1234567890',

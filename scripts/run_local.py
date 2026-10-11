@@ -48,7 +48,7 @@ def available_port(preferred: int) -> int:
 
 
 def prepare_browser():
-    """Keep capture dependencies in the project's ignored local directory."""
+    """Prepare the backend environment. Browsers are installed separately for E2E."""
     local = ROOT / '.local'
     local.mkdir(exist_ok=True)
     venv = local / 'venv'
@@ -64,10 +64,9 @@ def prepare_browser():
             marker.write_text(digest)
         browsers = local / 'browsers'
         os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(browsers)
-        subprocess.run([str(python), '-m', 'playwright', 'install', '--only-shell', 'chromium'], check=True)
         return str(python)
     except (OSError, subprocess.CalledProcessError) as error:
-        print(f'A captura com navegador não ficou disponível: {error}', flush=True)
+        print(f'O ambiente Python não ficou disponível: {error}', flush=True)
         return sys.executable
 
 

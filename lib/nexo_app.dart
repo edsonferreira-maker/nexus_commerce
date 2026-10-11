@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'product_browser_capture.dart';
@@ -1024,6 +1025,14 @@ class _CommerceShellState extends State<CommerceShell> {
     BuildContext context, [
     ProductPageData? initial,
   ]) async {
+    if (selfHosted) {
+      await launchUrl(
+        Uri.base.resolve('/admin/import${initial == null ? '' : '?id=${initial.id}'}'),
+        mode: LaunchMode.platformDefault,
+        webOnlyWindowName: '_self',
+      );
+      return;
+    }
     final result = await showDialog<ProductPageData>(
       context: context,
       barrierDismissible: false,
@@ -1409,28 +1418,85 @@ class ProductionOrders extends StatelessWidget {
   const ProductionOrders({super.key});
 
   @override
-  Widget build(BuildContext context) => const Content(
+  Widget build(BuildContext context) => Content(
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Heading(
+        const Heading(
           'PEDIDOS',
           'Pedidos',
-          'As compras são concluídas no Mercado Livre.',
+          'Compras do checkout próprio e seus pagamentos.',
         ),
-        SizedBox(height: 24),
-        Card(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'Este servidor ainda não recebe os pedidos do Mercado Livre. Consulte os pedidos na sua conta do marketplace.',
-              style: TextStyle(color: muted),
-            ),
-          ),
+        const SizedBox(height: 24),
+        FutureBuilder<http.Response>(
+          future: http.get(Uri.base.resolve('/api/orders')),
+          builder: (context, result) {
+            if (result.hasError ||
+                (result.hasData && result.data!.statusCode != 200)) {
+              return const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('Não foi possível carregar os pedidos.'),
+                ),
+              );
+            }
+            if (!result.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final data = jsonDecode(result.data!.body) as Map<String, dynamic>;
+            final orders = (data['orders'] as List<dynamic>? ?? [])
+                .map((value) => Map<String, dynamic>.from(value as Map))
+                .toList();
+            if (orders.isEmpty) {
+              return const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Nenhum pedido de checkout próprio recebido ainda.',
+                    style: TextStyle(color: muted),
+                  ),
+                ),
+              );
+            }
+            return Card(
+              child: Column(
+                children: orders
+                    .map(
+                      (order) => ListTile(
+                        leading: Icon(
+                          order['status'] == 'paid'
+                              ? Icons.check_circle
+                              : Icons.pix,
+                          color: order['status'] == 'paid' ? green : orange,
+                        ),
+                        title: Text(order['product'] as String? ?? 'Produto'),
+                        subtitle: Text(
+                          'Pedido ${order['id']} • ${_orderStatus(order['status'] as String? ?? '')}',
+                        ),
+                        trailing: Text(
+                          _formatOrderMoney(order['amount'] as int? ?? 0),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            );
+          },
         ),
       ],
     ),
   );
+
+  static String _orderStatus(String status) => switch (status) {
+    'paid' => 'Pago',
+    'expired' => 'Expirado',
+    'failed' => 'Falhou',
+    _ => 'Aguardando pagamento',
+  };
+
+  static String _formatOrderMoney(int cents) =>
+      'R\$ ${(cents ~/ 100).toString()},${(cents % 100).toString().padLeft(2, '0')}';
 }
 
 class ServerSettings extends StatelessWidget {
@@ -1445,79 +1511,265 @@ class ServerSettings extends StatelessWidget {
         const Heading(
           'PREFERÊNCIAS',
           'Configurações',
-          'Estado da integração hospedada no seu servidor.',
+          'Conexões e credenciais da sua conta.',
         ),
         const SizedBox(height: 24),
-        Card(
+        FilledButton.icon(
+          onPressed: () => launchUrl(
+            Uri.base.resolve('/admin/integrations'),
+            mode: LaunchMode.platformDefault,
+            webOnlyWindowName: '_self',
+          ),
+          icon: const Icon(Icons.key_rounded),
+          label: const Text('Central de Integrações'),
+        ),
+        const SizedBox(height: 16),
+        const Card(
           child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: FutureBuilder<http.Response>(
-              future: http.get(Uri.base.resolve('/api/mercadolivre/status')),
-              builder: (context, result) {
-                if (result.hasError) {
-                  return const Text('Não foi possível consultar a integração.');
-                }
-                if (!result.hasData) {
-                  return const Text('Consultando a integração…');
-                }
-                if (result.data!.statusCode != 200) {
-                  return const Text('Não foi possível consultar a integração.');
-                }
-                final status =
-                    jsonDecode(result.data!.body) as Map<String, dynamic>;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Mercado Livre',
-                      style: TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      status['connected'] == true
-                          ? 'Conta conectada para importar produtos.'
-                          : status['configured'] == true
-                          ? 'Aplicativo configurado. Conecte sua conta para importar.'
-                          : 'Cadastre as credenciais do aplicativo no arquivo .env do servidor.',
-                      style: const TextStyle(color: muted),
-                    ),
-                    if ((status['error'] as String? ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        status['error'] as String,
-                        style: const TextStyle(color: red, fontSize: 13),
-                      ),
-                    ],
-                    if ((status['warning'] as String? ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        status['warning'] as String,
-                        style: const TextStyle(color: orange, fontSize: 13),
-                      ),
-                    ],
-                    if (status['configured'] == true &&
-                        status['connected'] != true) ...[
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: () => launchUrl(
-                          Uri.base.resolve('/api/mercadolivre/connect'),
-                          mode: LaunchMode.platformDefault,
-                          webOnlyWindowName: '_self',
-                        ),
-                        icon: const Icon(Icons.link),
-                        label: const Text('Conectar conta'),
-                      ),
-                    ],
-                  ],
-                );
-              },
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Conecte sua conta do Mercado Livre ou autorize os domínios da sua '
+              'loja na Central de Integrações. Cada conta usa suas próprias '
+              'credenciais, com status e teste de conexão.',
+              style: TextStyle(color: muted, height: 1.5),
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        FutureBuilder<http.Response>(
+          future: http.get(Uri.base.resolve('/api/auth/session')),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData || snapshot.data!.statusCode != 200) {
+              return const SizedBox.shrink();
+            }
+            final identity = jsonDecode(snapshot.data!.body) as Map<String, dynamic>;
+            return identity['tenant'] == 'admin'
+                ? const ServerPaymentSettings()
+                : const SizedBox.shrink();
+          },
+        ),
       ],
+    ),
+  );
+}
+
+class ServerPaymentSettings extends StatefulWidget {
+  const ServerPaymentSettings({super.key});
+
+  @override
+  State<ServerPaymentSettings> createState() => _ServerPaymentSettingsState();
+}
+
+class _ServerPaymentSettingsState extends State<ServerPaymentSettings> {
+  late Future<http.Response> status = http.get(
+    Uri.base.resolve('/api/payments/config'),
+  );
+  final token = TextEditingController();
+  final baseUrl = TextEditingController();
+  final webhookUrl = TextEditingController();
+  bool checking = false, saving = false, fieldsInitialized = false;
+
+  @override
+  void dispose() {
+    token.dispose();
+    baseUrl.dispose();
+    webhookUrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> saveConfig() async {
+    setState(() => saving = true);
+    try {
+      final response = await http.post(
+        Uri.base.resolve('/api/payments/config'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'apiToken': token.text,
+          'baseUrl': baseUrl.text,
+          'webhookUrl': webhookUrl.text,
+        }),
+      );
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      if (response.statusCode != 200) {
+        throw Exception(
+          data['message'] as String? ??
+              'Não foi possível salvar a configuração.',
+        );
+      }
+      token.clear();
+      fieldsInitialized = false;
+      setState(() {
+        status = http.get(Uri.base.resolve('/api/payments/config'));
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Configuração da PixzyPay salva.')),
+      );
+    } catch (failure) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(failure.toString().replaceFirst('Exception: ', '')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> checkAccount() async {
+    setState(() => checking = true);
+    try {
+      final response = await http.get(
+        Uri.base.resolve('/api/payments/account'),
+      );
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            response.statusCode == 200
+                ? 'Conexão com a PixzyPay validada.'
+                : data['message'] as String? ??
+                      'Não foi possível validar a PixzyPay.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível validar a PixzyPay.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: FutureBuilder<http.Response>(
+        future: status,
+        builder: (context, result) {
+          if (result.hasError ||
+              (result.hasData && result.data!.statusCode != 200)) {
+            return const Text('Não foi possível consultar a PixzyPay.');
+          }
+          if (!result.hasData) return const Text('Consultando a PixzyPay…');
+          final config = jsonDecode(result.data!.body) as Map<String, dynamic>;
+          final configured = config['configured'] == true;
+          final managedByEnvironment = config['managedByEnvironment'] == true;
+          if (!fieldsInitialized) {
+            baseUrl.text =
+                config['baseUrl'] as String? ?? 'https://app.pixzypay.com/api';
+            webhookUrl.text = config['webhookUrl'] as String? ?? '';
+            fieldsInitialized = true;
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Pagamento e Pix',
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              InfoRow(
+                Icons.hub_outlined,
+                'Gateway',
+                'PixzyPay • ${configured ? 'conectado' : 'não configurado'}',
+              ),
+              InfoRow(
+                Icons.key_outlined,
+                'Credencial',
+                config['credential'] as String? ?? 'Não configurada',
+              ),
+              InfoRow(
+                Icons.webhook_outlined,
+                'Webhook',
+                config['webhookConfigured'] == true
+                    ? 'Configurado'
+                    : 'Não configurado',
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: token,
+                enabled: !managedByEnvironment,
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: configured
+                      ? 'Novo API Token (opcional)'
+                      : 'API Token',
+                  hintText: configured
+                      ? 'Deixe vazio para manter o token atual'
+                      : 'Cole o Bearer Token da PixzyPay',
+                  prefixIcon: const Icon(Icons.key_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: baseUrl,
+                enabled: !managedByEnvironment,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'URL da API',
+                  prefixIcon: Icon(Icons.link),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: webhookUrl,
+                enabled: !managedByEnvironment,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'URL do webhook',
+                  prefixIcon: Icon(Icons.webhook_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  FilledButton.icon(
+                    onPressed: !managedByEnvironment && !saving
+                        ? saveConfig
+                        : null,
+                    icon: saving
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_outlined),
+                    label: const Text('Salvar configuração'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: configured && !checking ? checkAccount : null,
+                    icon: checking
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.health_and_safety_outlined),
+                    label: const Text('Testar conexão'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                managedByEnvironment
+                    ? 'Esta configuração é gerenciada pelas variáveis de ambiente do servidor.'
+                    : 'O token é enviado ao backend por HTTPS, salvo no volume privado e nunca retornado ao navegador.',
+                style: const TextStyle(color: muted, fontSize: 12),
+              ),
+            ],
+          );
+        },
+      ),
     ),
   );
 }
@@ -2887,7 +3139,73 @@ class Settings extends StatefulWidget {
 }
 
 class _SettingsState extends State<Settings> {
-  bool sandbox = true, sync = true, email = true, whatsapp = false;
+  bool sync = true, email = true, whatsapp = false;
+  bool paymentLoading = true, checkingAccount = false;
+  Map<String, dynamic> paymentConfig = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    loadPaymentConfig();
+  }
+
+  Future<void> loadPaymentConfig() async {
+    if (!selfHosted) {
+      setState(() {
+        paymentConfig = const {
+          'label': 'PixzyPay',
+          'configured': false,
+          'credential': 'Configure no servidor',
+          'webhookConfigured': false,
+        };
+        paymentLoading = false;
+      });
+      return;
+    }
+    try {
+      final response = await http.get(Uri.base.resolve('/api/payments/config'));
+      if (response.statusCode != 200) throw Exception();
+      if (!mounted) return;
+      setState(() {
+        paymentConfig = Map<String, dynamic>.from(
+          jsonDecode(response.body) as Map,
+        );
+        paymentLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => paymentLoading = false);
+    }
+  }
+
+  Future<void> checkPaymentAccount() async {
+    setState(() => checkingAccount = true);
+    try {
+      final response = await http.get(
+        Uri.base.resolve('/api/payments/account'),
+      );
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            response.statusCode == 200
+                ? 'Conexão com a PixzyPay validada.'
+                : data['message'] as String? ??
+                      'Não foi possível validar a PixzyPay.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível validar a PixzyPay.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => checkingAccount = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Content(
     maxWidth: 1000,
@@ -2905,29 +3223,47 @@ class _SettingsState extends State<Settings> {
         ]),
         const SizedBox(height: 16),
         SettingsBlock('Pagamento e Pix', Icons.account_balance_wallet_outlined, [
-          SwitchListTile.adaptive(
-            value: sandbox,
-            onChanged: (v) => setState(() => sandbox = v),
-            title: const Text('Ambiente de teste'),
-            subtitle: const Text(
-              'Nenhuma cobrança real será processada.',
-              style: TextStyle(color: muted, fontSize: 12),
+          if (paymentLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: LinearProgressIndicator(),
+            )
+          else ...[
+            InfoRow(
+              Icons.hub_outlined,
+              'Gateway',
+              '${paymentConfig['label'] ?? 'PixzyPay'} • ${paymentConfig['configured'] == true ? 'conectado' : 'não configurado'}',
             ),
-            contentPadding: EdgeInsets.zero,
-            activeTrackColor: green,
-          ),
-          const Divider(),
-          const InfoRow(
-            Icons.hub_outlined,
-            'Gateway',
-            'Mercado Pago • conectado',
-          ),
-          const InfoRow(
-            Icons.key_outlined,
-            'Credencial',
-            'APP_USR_•••••••84F2',
-          ),
-          const InfoRow(Icons.timer_outlined, 'Expiração do Pix', '30 minutos'),
+            InfoRow(
+              Icons.key_outlined,
+              'Credencial',
+              paymentConfig['credential'] as String? ?? 'Não configurada',
+            ),
+            InfoRow(
+              Icons.webhook_outlined,
+              'Webhook',
+              paymentConfig['webhookConfigured'] == true
+                  ? 'Configurado'
+                  : 'Não configurado',
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed:
+                    paymentConfig['configured'] == true && !checkingAccount
+                    ? checkPaymentAccount
+                    : null,
+                icon: checkingAccount
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.health_and_safety_outlined),
+                label: const Text('Testar conexão'),
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(13),
             decoration: BoxDecoration(
@@ -2942,7 +3278,7 @@ class _SettingsState extends State<Settings> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Credenciais criptografadas nunca aparecem completas no painel ou nos logs.',
+                    'O token é lido de PIXZY_API_TOKEN somente pelo backend e nunca é enviado ao navegador.',
                     style: TextStyle(color: muted, fontSize: 12),
                   ),
                 ),
@@ -3076,6 +3412,7 @@ class _ImportDialogState extends State<ImportDialog> {
   final removedReviews = <int>{};
   ProductPageData? importedPage;
   String? importError;
+  bool rightsConfirmed = false;
   int step = 0;
   bool redirect = false, loading = false, agreed = true;
   bool? mercadoLivreConnected;
@@ -3156,15 +3493,13 @@ class _ImportDialogState extends State<ImportDialog> {
         : int.tryParse(stockController.text.trim());
     if (storeNameController.text.trim().isEmpty ||
         nameController.text.trim().isEmpty ||
-        priceController.text.trim().isEmpty ||
-        images.isEmpty ||
         images.length > 10 ||
         variations.length > 12 ||
         stock == null ||
         stock < -1) {
       setState(
         () => importError =
-            'Preencha loja, título, preço e fotos; use até 12 variações e estoque válido.',
+            'Preencha loja e título; use até 10 fotos, 12 variações e estoque válido.',
       );
       return null;
     }
@@ -3470,7 +3805,15 @@ class _ImportDialogState extends State<ImportDialog> {
       });
       try {
         final sourceUrl = controller.text.trim();
-        final capturedHtml = await captureProductHtml(sourceUrl);
+        final sourceHost = Uri.tryParse(sourceUrl)?.host ?? '';
+        final isMercadoLivre =
+            RegExp(
+              r'(^|\.)mercadoliv(?:r|b)e\.com\.br$',
+            ).hasMatch(sourceHost) ||
+            RegExp(r'^MLB[-_]?\d+$', caseSensitive: false).hasMatch(sourceUrl);
+        final capturedHtml = isMercadoLivre
+            ? null
+            : await captureProductHtml(sourceUrl);
         final response = await http.post(
           Uri.base.resolve('/api/products/import'),
           headers: const {'Content-Type': 'application/json'},
@@ -3524,6 +3867,13 @@ class _ImportDialogState extends State<ImportDialog> {
   }
 
   void openPagePreview() {
+    if (selfHosted) {
+      launchUrl(
+        Uri.base.resolve('/admin/import'),
+        mode: LaunchMode.platformDefault,
+      );
+      return;
+    }
     final page = editedPage();
     if (page == null) return;
     Navigator.push(
@@ -3542,6 +3892,12 @@ class _ImportDialogState extends State<ImportDialog> {
     }
     final page = editedPage();
     if (page == null) return;
+    if (page.market == 'Mercado Livre' && !rightsConfirmed) {
+      setState(
+        () => importError = 'Confirme os direitos de publicação dos dados.',
+      );
+      return;
+    }
     setState(() {
       loading = true;
       importError = null;
@@ -3554,6 +3910,7 @@ class _ImportDialogState extends State<ImportDialog> {
           'id': page.id,
           'redirect': redirect,
           'page': page.editableJson(),
+          'rightsConfirmed': rightsConfirmed,
         }),
       );
       final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -3617,37 +3974,28 @@ class _ImportDialogState extends State<ImportDialog> {
           ),
         ),
         const SizedBox(height: 16),
+        if (selfHosted && page.market == 'Mercado Livre') ...[
+          CheckboxListTile(
+            value: rightsConfirmed,
+            onChanged: (value) =>
+                setState(() => rightsConfirmed = value ?? false),
+            title: const Text(
+              'Confirmo autorização para publicar os textos, imagens e avaliações selecionados.',
+            ),
+          ),
+          TextButton(
+            onPressed: () => launchUrl(
+              Uri.base.resolve('/admin/import'),
+              mode: LaunchMode.platformDefault,
+            ),
+            child: const Text('Gerenciar recomendações do catálogo próprio'),
+          ),
+        ],
         if (page.importNotice.isNotEmpty) ...[
           Text(
             page.importNotice,
             style: const TextStyle(color: orange, fontSize: 12),
           ),
-          if (page.market == 'Mercado Livre' && page.images.isEmpty)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: [
-                  TextButton.icon(
-                    onPressed: () => launchUrl(
-                      Uri.base.resolve('/nexo-mercadolivre-extension.zip'),
-                      mode: LaunchMode.platformDefault,
-                    ),
-                    icon: const Icon(Icons.extension_outlined, size: 18),
-                    label: const Text('Conector para Chrome ou Edge'),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => launchUrl(
-                      Uri.base.resolve('/nexo-mercadolivre-safari.zip'),
-                      mode: LaunchMode.platformDefault,
-                    ),
-                    icon: const Icon(Icons.explore_outlined, size: 18),
-                    label: const Text('Conector para Safari (Xcode)'),
-                  ),
-                ],
-              ),
-            ),
           const SizedBox(height: 12),
         ],
         Row(
@@ -3968,7 +4316,9 @@ class _ImportDialogState extends State<ImportDialog> {
             Expanded(
               child: Text(
                 Uri.base
-                    .resolve('/p/${(importedPage ?? demoProductPage).slug}')
+                    .resolve(
+                      '/produto/${(importedPage ?? demoProductPage).slug}',
+                    )
                     .toString(),
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 12),
@@ -3979,7 +4329,9 @@ class _ImportDialogState extends State<ImportDialog> {
               onPressed: () => Clipboard.setData(
                 ClipboardData(
                   text: Uri.base
-                      .resolve('/p/${(importedPage ?? demoProductPage).slug}')
+                      .resolve(
+                        '/produto/${(importedPage ?? demoProductPage).slug}',
+                      )
                       .toString(),
                 ),
               ),
@@ -4759,6 +5111,19 @@ class _StorefrontState extends State<Storefront> {
       );
       return;
     }
+    if (selfHosted && widget.publicPage) {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        showDragHandle: true,
+        builder: (_) => Theme(
+          data: ThemeData.light(useMaterial3: true),
+          child: PaymentCheckoutSheet(page: widget.page, quantity: quantity),
+        ),
+      );
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
@@ -4806,4 +5171,355 @@ class _StorefrontState extends State<Storefront> {
       ),
     );
   }
+}
+
+class PixPayment {
+  const PixPayment({
+    required this.id,
+    required this.amount,
+    required this.status,
+    required this.brCode,
+  });
+
+  final String id, status, brCode;
+  final int amount;
+
+  factory PixPayment.fromJson(Map<String, dynamic> json) => PixPayment(
+    id: json['id'] as String? ?? '',
+    amount: json['amount'] as int? ?? 0,
+    status: json['status'] as String? ?? 'failed',
+    brCode: json['brCode'] as String? ?? '',
+  );
+}
+
+class PaymentCheckoutSheet extends StatefulWidget {
+  const PaymentCheckoutSheet({
+    required this.page,
+    required this.quantity,
+    super.key,
+  });
+
+  final ProductPageData page;
+  final int quantity;
+
+  @override
+  State<PaymentCheckoutSheet> createState() => _PaymentCheckoutSheetState();
+}
+
+class _PaymentCheckoutSheetState extends State<PaymentCheckoutSheet> {
+  final formKey = GlobalKey<FormState>();
+  final name = TextEditingController();
+  final email = TextEditingController();
+  final document = TextEditingController();
+  final phone = TextEditingController();
+  late final String idempotencyKey = _randomKey();
+  PixPayment? payment;
+  bool loading = false;
+  String error = '';
+
+  static String _randomKey() {
+    final random = math.Random.secure();
+    final bytes = List<int>.generate(24, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    email.dispose();
+    document.dispose();
+    phone.dispose();
+    super.dispose();
+  }
+
+  String? requiredField(String? value) =>
+      value == null || value.trim().isEmpty ? 'Campo obrigatório' : null;
+
+  Future<Map<String, dynamic>> decodeResponse(http.Response response) async {
+    try {
+      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<void> createPayment() async {
+    if (!(formKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      loading = true;
+      error = '';
+    });
+    try {
+      final response = await http.post(
+        Uri.base.resolve('/api/products/${widget.page.slug}/checkout'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'quantity': widget.quantity,
+          'idempotencyKey': idempotencyKey,
+          'customer': {
+            'name': name.text,
+            'email': email.text,
+            'document': document.text,
+            'phone': phone.text,
+          },
+        }),
+      );
+      final data = await decodeResponse(response);
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception(
+          data['message'] ??
+              'Não foi possível gerar o pagamento. Tente novamente.',
+        );
+      }
+      final created = PixPayment.fromJson(data);
+      if (created.id.isEmpty || created.brCode.isEmpty) {
+        throw Exception('Pagamento inválido.');
+      }
+      if (mounted) setState(() => payment = created);
+    } catch (failure) {
+      if (mounted) {
+        setState(
+          () => error = failure.toString().replaceFirst('Exception: ', ''),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> reconcile() async {
+    final current = payment;
+    if (current == null) return;
+    setState(() {
+      loading = true;
+      error = '';
+    });
+    try {
+      final response = await http.post(
+        Uri.base.resolve('/api/payments/${current.id}/reconcile'),
+        headers: const {'Content-Type': 'application/json'},
+        body: '{}',
+      );
+      final data = await decodeResponse(response);
+      if (response.statusCode != 200) {
+        throw Exception(
+          data['message'] ?? 'Não foi possível consultar o pagamento.',
+        );
+      }
+      if (mounted) setState(() => payment = PixPayment.fromJson(data));
+    } catch (failure) {
+      if (mounted) {
+        setState(
+          () => error = failure.toString().replaceFirst('Exception: ', ''),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  String money(int cents) {
+    final value = (cents ~/ 100).toString();
+    final groups = value.replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (_) => '.',
+    );
+    return 'R\$ $groups,${(cents % 100).toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        24,
+        8,
+        24,
+        24 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: payment == null ? _customerForm() : _paymentContent(payment!),
+      ),
+    ),
+  );
+
+  Widget _customerForm() => Form(
+    key: formKey,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Pagar com Pix',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${widget.quantity}x ${widget.page.name}',
+          style: const TextStyle(color: Color(0xFF68716A)),
+        ),
+        const SizedBox(height: 18),
+        TextFormField(
+          controller: name,
+          validator: requiredField,
+          autofillHints: const [AutofillHints.name],
+          decoration: const InputDecoration(labelText: 'Nome completo'),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: email,
+          validator: (value) => value != null && value.contains('@')
+              ? null
+              : 'Informe um e-mail válido',
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email],
+          decoration: const InputDecoration(labelText: 'E-mail'),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: document,
+          validator: requiredField,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'CPF ou CNPJ'),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: phone,
+          validator: requiredField,
+          keyboardType: TextInputType.phone,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          decoration: const InputDecoration(labelText: 'Telefone'),
+        ),
+        if (error.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(error, style: const TextStyle(color: Colors.red)),
+        ],
+        const SizedBox(height: 18),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: loading ? null : createPayment,
+            icon: loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.pix),
+            label: const Text('Gerar Pix'),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _paymentContent(PixPayment value) {
+    if (value.status == 'paid') {
+      return _result(
+        Icons.check_circle,
+        Colors.green,
+        'Pagamento confirmado',
+        'Seu pedido foi pago com sucesso.',
+      );
+    }
+    if (value.status == 'expired') {
+      return _result(
+        Icons.timer_off_outlined,
+        Colors.orange,
+        'Pagamento expirado',
+        'Gere uma nova cobrança para continuar.',
+      );
+    }
+    if (value.status == 'failed' || value.status == 'cancelled') {
+      return _result(
+        Icons.error_outline,
+        Colors.red,
+        'Pagamento não concluído',
+        'Não foi possível concluir esta cobrança.',
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'Aguardando pagamento',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          money(value.amount),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 18),
+        QrImageView(
+          data: value.brCode,
+          size: 220,
+          backgroundColor: Colors.white,
+        ),
+        const SizedBox(height: 12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF2F4F1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            value.brCode,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: value.brCode));
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Código Pix copiado.')),
+                );
+              }
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('Copiar código Pix'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: loading ? null : reconcile,
+          icon: loading
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh),
+          label: const Text('Já paguei • verificar pagamento'),
+        ),
+        if (error.isNotEmpty)
+          Text(error, style: const TextStyle(color: Colors.red)),
+      ],
+    );
+  }
+
+  Widget _result(IconData icon, Color color, String title, String message) =>
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 72),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Text(message, textAlign: TextAlign.center),
+          const SizedBox(height: 18),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar'),
+          ),
+        ],
+      );
 }

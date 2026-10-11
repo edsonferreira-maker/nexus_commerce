@@ -11,3 +11,8 @@ coverage
 __pycache__
 test
 server/test_*.py
+.local
+.agents
+docs
+server/e2e_*.py
+server/fixtures

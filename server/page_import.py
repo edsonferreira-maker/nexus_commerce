@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import math
 import json
 import re
 import urllib.error
@@ -34,58 +35,21 @@ def market_for_url(value: str) -> tuple[str, str]:
     for key, (label, domains) in MARKETS.items():
         if any(host == domain or host.endswith('.' + domain) for domain in domains):
             return key, label
-    raise ImportErrorMessage('Link compatível: Mercado Livre, Shopee, Temu, AliExpress ou Amazon.')
+    from universal_import import validate_url
+    validate_url(value)
+    return 'generic', host
 
 
 class SafeRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
-        market_for_url(newurl)
+        if market_for_url(newurl)[0] == 'mercadolivre':
+            raise ImportErrorMessage('Mercado Livre exige a API autorizada.')
         return super().redirect_request(request, fp, code, msg, headers, newurl)
 
 
-def fetch_html(url: str) -> str:
-    market, _ = market_for_url(url)
-    opener = urllib.request.build_opener(SafeRedirect)
-    def read(user_agent: str) -> str:
-        request = urllib.request.Request(url, headers={
-            'User-Agent': user_agent,
-            'Accept': 'text/html,application/xhtml+xml',
-        })
-        with opener.open(request, timeout=12) as response:
-            final_path = urllib.parse.urlsplit(response.geturl()).path.lower()
-            if any(part in final_path for part in (
-                '/signin', '/login', '/captcha', '/challenge', '/verify',
-                '/account-verification', '/suspicious-traffic',
-            )):
-                raise ImportErrorMessage('A loja exigiu login ou verificação para mostrar o produto.')
-            if 'html' not in response.headers.get_content_type():
-                raise ImportErrorMessage('A URL não retornou uma página HTML.')
-            raw = response.read(MAX_HTML + 1)
-            if len(raw) > MAX_HTML:
-                raise ImportErrorMessage('A página é grande demais para importação automática.')
-            return raw.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
-    try:
-        return read('Mozilla/5.0 (compatible; NexoCommerce/1.0)')
-    except (urllib.error.HTTPError, OSError, UnicodeError, ImportErrorMessage) as error:
-        if market == 'mercadolivre':
-            try:
-                # O Mercado Livre publica metadados completos para agentes de
-                # pré-visualização de links mesmo quando bloqueia IPs de nuvem.
-                return read(
-                    'facebookexternalhit/1.1 '
-                    '(+https://nexus-commerce-1n5m.onrender.com)'
-                )
-            except (urllib.error.HTTPError, OSError, UnicodeError, ImportErrorMessage):
-                pass
-        if isinstance(error, ImportErrorMessage):
-            raise error
-        if not isinstance(error, urllib.error.HTTPError):
-            raise ImportErrorMessage(
-                'Não foi possível ler a página diretamente. A inspeção pelo navegador será tentada automaticamente.'
-            ) from error
-        raise ImportErrorMessage(
-            f'A loja bloqueou a leitura direta (HTTP {error.code}). A inspeção pelo navegador será tentada automaticamente.'
-        ) from error
+def fetch_html(url: str, config=None) -> str:
+    from universal_import import safe_fetch
+    return safe_fetch(url, config or {})
 
 
 def augment_with_dom_snapshot(html: str, snapshot: dict, url: str) -> str:
@@ -138,121 +102,7 @@ def augment_with_dom_snapshot(html: str, snapshot: dict, url: str) -> str:
 
 
 def fetch_rendered_html(url: str) -> str:
-    """Read the DOM after JavaScript executes, as shown in browser devtools."""
-    market_for_url(url)
-    try:
-        from playwright.sync_api import Error as BrowserError
-        from playwright.sync_api import TimeoutError as BrowserTimeout
-        from playwright.sync_api import sync_playwright
-    except ImportError as error:
-        raise ImportErrorMessage(
-            'O navegador de inspeção automática não está instalado no servidor.'
-        ) from error
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            try:
-                page = browser.new_page(
-                    locale='pt-BR',
-                    timezone_id='America/Sao_Paulo',
-                    viewport={'width': 1440, 'height': 1000},
-                    color_scheme='light',
-                )
-                def allow_request(route):
-                    request_url = urllib.parse.urlsplit(route.request.url)
-                    host = (request_url.hostname or '').lower()
-                    try:
-                        address = ipaddress.ip_address(host)
-                    except ValueError:
-                        private_host = host in ('localhost',) or host.endswith(('.local', '.internal'))
-                    else:
-                        private_host = not address.is_global
-                    if request_url.scheme not in ('http', 'https') or private_host:
-                        return route.abort()
-                    if route.request.is_navigation_request():
-                        try:
-                            market_for_url(route.request.url)
-                        except ImportErrorMessage:
-                            return route.abort()
-                    return route.continue_()
-
-                page.route('**/*', allow_request)
-                page.goto(url, wait_until='domcontentloaded', timeout=20000)
-                try:
-                    page.wait_for_load_state('networkidle', timeout=5000)
-                except BrowserTimeout:
-                    pass
-                try:
-                    page.locator('h1, [itemprop="name"], meta[property="og:title"]').first.wait_for(
-                        state='attached', timeout=5000,
-                    )
-                except BrowserTimeout:
-                    pass
-                page.evaluate('window.scrollTo(0, Math.min(document.body.scrollHeight, 1600))')
-                page.wait_for_timeout(750)
-                final_url = page.url
-                market_for_url(final_url)
-                path = urllib.parse.urlsplit(final_url).path.lower()
-                if any(part in path for part in (
-                    '/signin', '/login', '/captcha', '/challenge', '/verify',
-                    '/account-verification', '/suspicious-traffic',
-                )):
-                    raise ImportErrorMessage(
-                        'A loja exigiu login ou verificação e bloqueou a inspeção automática.'
-                    )
-                html = page.content()
-                snapshot = page.evaluate("""
-                    () => {
-                      const content = (selector) =>
-                        document.querySelector(selector)?.getAttribute('content')?.trim() || '';
-                      const text = (selectors) => {
-                        for (const selector of selectors) {
-                          const value = document.querySelector(selector)?.textContent?.trim();
-                          if (value) return value.replace(/\\s+/g, ' ');
-                        }
-                        return '';
-                      };
-                      const title = content('meta[property="og:title"]') || text([
-                        'h1[itemprop="name"]', '[data-testid*="title"]', 'main h1', 'h1'
-                      ]);
-                      const description = content('meta[property="og:description"]') ||
-                        content('meta[name="description"]') || text([
-                          '[itemprop="description"]', '[data-testid*="description"]',
-                          '[class*="description"]'
-                        ]);
-                      const priceAmount = content('meta[itemprop="price"]') ||
-                        content('meta[property="product:price:amount"]');
-                      const priceCurrency = content('meta[itemprop="priceCurrency"]') ||
-                        content('meta[property="product:price:currency"]');
-                      const priceText = text([
-                        '[itemprop="price"]', '[data-testid*="price"]',
-                        '[class*="price-tag"]', '[class*="price"]'
-                      ]);
-                      const images = [];
-                      const add = (value) => {
-                        if (value && !images.includes(value)) images.push(value);
-                      };
-                      add(content('meta[property="og:image"]'));
-                      add(content('meta[name="twitter:image"]'));
-                      for (const image of document.querySelectorAll('main img, [role="main"] img, img[itemprop="image"]')) {
-                        if (image.naturalWidth >= 160 || image.naturalHeight >= 160 || image.alt?.includes(title)) {
-                          add(image.currentSrc || image.dataset.zoomImage || image.dataset.src || image.src);
-                        }
-                        if (images.length >= 20) break;
-                      }
-                      return {title, description, priceAmount, priceCurrency, priceText, images};
-                    }
-                """)
-                html = augment_with_dom_snapshot(html, snapshot, final_url)
-                if len(html.encode('utf-8')) > MAX_HTML:
-                    raise ImportErrorMessage('A página renderizada é grande demais para importar.')
-                return html
-            finally:
-                browser.close()
-    except BrowserError as error:
-        raise ImportErrorMessage(
-            'A inspeção automática pelo navegador não conseguiu abrir a página.'
-        ) from error
+    raise ImportErrorMessage('Captura automatizada por navegador desativada. Use API ou HTML autorizado.')
 
 
 class MetadataParser(HTMLParser):
@@ -364,7 +214,7 @@ def price_text(value, currency: str) -> str:
         amount = float(str(value).replace(',', '.'))
     except ValueError:
         return ''
-    if amount < 0:
+    if not math.isfinite(amount) or amount < 0:
         return ''
     prefix = {'BRL': 'R$', 'USD': 'US$', 'EUR': '€'}.get(currency.upper(), currency.upper() + ' ')
     return prefix + ' ' + f'{amount:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
@@ -372,7 +222,7 @@ def price_text(value, currency: str) -> str:
 
 def blank_product(url: str, notice: str = '') -> dict:
     _, market = market_for_url(url)
-    canonical = urllib.parse.urlsplit(url)._replace(query='', fragment='').geturl()
+    canonical = urllib.parse.urlsplit(url)._replace(fragment='').geturl()
     digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
     return {
         'id': 'SRC' + digest.upper(),
@@ -385,7 +235,7 @@ def blank_product(url: str, notice: str = '') -> dict:
         'images': [],
         'description': '',
         'reviews': [],
-        'rating': '0',
+        'rating': '',
         'reviewCount': 0,
         'stock': -1,
         'brand': '',
@@ -488,15 +338,15 @@ def extract_product(url: str, html: str) -> dict:
     if not isinstance(offers, dict):
         offers = {}
     currency = text_value(offers.get('priceCurrency')) or meta.get('product:price:currency') or meta.get('pricecurrency') or ''
-    price = price_text(offers.get('price') or meta.get('product:price:amount') or meta.get('price'), currency)
+    price = price_text(offers.get('price') if offers.get('price') is not None else meta.get('product:price:amount') or meta.get('price'), currency)
     aggregate = product.get('aggregateRating') or {}
     if not isinstance(aggregate, dict):
         aggregate = {}
     rating = aggregate.get('ratingValue')
     try:
-        rating_text = f'{float(rating):.1f}'.replace('.', ',') if rating is not None else '0'
+        rating_text = f'{float(rating):.1f}'.replace('.', ',') if rating is not None and math.isfinite(float(rating)) and 0 < float(rating) <= 5 else ''
     except (ValueError, TypeError):
-        rating_text = '0'
+        rating_text = ''
     reviews = []
     raw_reviews = product.get('review') or []
     if isinstance(raw_reviews, dict):
@@ -513,7 +363,7 @@ def extract_product(url: str, html: str) -> dict:
         except (ValueError, TypeError):
             stars = 0
         reviews.append({
-            'author': text_value(review.get('author')) or f'Comprador da {market}',
+            'author': text_value(review.get('author')) or 'Autor não informado',
             'date': text_value(review.get('datePublished')),
             'comment': comment,
             'stars': stars if 1 <= stars <= 5 else 0,
@@ -526,6 +376,7 @@ def extract_product(url: str, html: str) -> dict:
     draft.update({
         'name': title[:200],
         'price': price,
+        'currency': currency or None,
         'images': images[:10],
         'description': description[:10000],
         'reviews': reviews,

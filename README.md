@@ -26,19 +26,35 @@ O plano gratuito serve para validação, mas seu sistema de arquivos é temporá
 
 No painel, abra **Importar produto**, cole o link e clique em **Importar informações**. Revise título, preço, nome da loja, marca, descrição, estoque, frete, variações, fotos e comentários encontrados. Você pode alterar os campos da sua página, trocar URLs de fotos, enviar imagens JPG/PNG/WebP do seu computador para o próprio servidor e ocultar comentários antes de abrir **Ver página completa** e publicar. Depois da publicação, use **Editar sua página** no catálogo para atualizar o mesmo endereço.
 
-Para Shopee, Temu, AliExpress e Amazon, o servidor tenta ler metadados estruturados JSON-LD e Open Graph da página pública. Quando o HTML inicial está incompleto, um Chromium carrega a página e captura o DOM depois da execução do JavaScript, como no inspetor do navegador. A disponibilidade dos dados depende da loja e do anúncio. Se houver bloqueio ou login, o sistema mostra a falha e você pode colar o HTML no campo opcional **HTML da página**. Comentários só aparecem quando estão disponíveis nos dados da página; nenhum comentário é criado automaticamente. Fotos que não estiverem no seu servidor dependem da disponibilidade da URL de origem; o envio de fotos locais evita essa dependência. Use fotos e textos que você tenha direito de publicar na sua página.
+O importador é universal para URLs HTTPS, respeitando as permissões da fonte. Em **Configurações → Central de Integrações**, cada conta configura sua conexão OAuth Mercado Livre ou autoriza hosts exatos para leitura de HTML de sua loja. A captura genérica usa o parser nativo Python para JSON-LD, OpenGraph, microdata, imagens lazy/srcset e seletores simples. Sites que dependem de scripts, login ou bloqueios exigem API oficial, HTML autorizado ou dados próprios; não há captura automatizada por navegador. Reviews, notas, preços e imagens ausentes não são inventados.
 
-O resultado é uma página hospedada no **seu domínio**, com o nome da sua loja e uma URL pública `/p/...`. O botão de compra direciona à oferta original. O checkout próprio ainda não está implementado.
+O editor mantém a prévia lateral visível no desktop e abas **Dados / Prévia** no mobile. A prévia acompanha as alterações de título, preço, descrição, fotos, avaliações selecionadas e recomendações próprias, em iframe isolado. A página publicada usa o mesmo renderizador HTML no servidor e funciona sem extensão e sem JavaScript.
+
+Veja [implementação, contas, provedores e execução](docs/IMPORTADOR_UNIVERSAL.md) e [resultados dos testes e pendências reais](docs/VALIDACAO_UNIVERSAL.md).
+O resultado é uma página hospedada no **seu domínio**, com o nome da sua loja e uma URL pública `/p/...`. O botão de compra pode direcionar à oferta original ou usar checkout próprio via PixzyPay. No checkout próprio, o servidor recalcula o preço do produto publicado, cria a cobrança Pix e confirma o pedido por webhook ou reconciliação; o navegador nunca acessa a API da PixzyPay diretamente.
+
+### Pagamentos PixzyPay
+
+Crie um Bearer Token em **Configurações → Tokens de API** na PixzyPay. No painel administrativo do Nexo, abra **Configurações → Pagamento e Pix**, informe o token, a URL da API e a URL pública do webhook e clique em **Salvar configuração**. O token é enviado ao backend por HTTPS, fica no volume privado do servidor e nunca é devolvido ao navegador.
+
+Como alternativa, a configuração pode ser gerenciada pelo ambiente do servidor. Nesse caso, os campos do painel ficam bloqueados e as variáveis têm prioridade:
+
+```env
+PIXZY_BASE_URL=https://app.pixzypay.com/api
+PIXZY_API_TOKEN=seu_token_secreto
+PIXZY_WEBHOOK_URL=https://loja.exemplo.com.br/api/webhooks/pixzypay/transactions
+```
+
+Depois de salvar, use **Testar conexão** e, ao publicar um produto, selecione **Checkout próprio**. Nunca coloque `PIXZY_API_TOKEN` em `--dart-define`, no código Flutter, no JavaScript ou em arquivos versionados.
+
+O webhook público é `POST /api/webhooks/pixzypay/transactions`. Como a documentação atual da PixzyPay não define assinatura criptográfica, o backend confere transação, pedido e valor e consulta `GET /transactions/{id}` antes de alterar o status financeiro. Eventos repetidos são deduplicados no SQLite.
 
 ### Mercado Livre
 
 Crie um aplicativo no [portal oficial de desenvolvedores](https://developers.mercadolivre.com.br/pt_br/configuracao-ou-requisitos-previos) e cadastre a URL de retorno `https://seu-dominio/api/mercadolivre/callback`. Preencha `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ML_REDIRECT_URI` no `.env`, depois execute `docker compose up -d`.
 
-Clique em **Conectar conta do Mercado Livre** e autorize o aplicativo para usar a API oficial. Para um link de catálogo `/p/MLB...`, o importador usa o anúncio selecionado no parâmetro `wid` quando ele pertence ao catálogo; caso contrário, usa a oferta disponível. A API fornece título, preço, estoque, fotos, descrição, variações e avaliações, e as fotos são copiadas para o volume quando possível. Sem a conexão, o sistema tenta a página pública e o DOM renderizado; se o Mercado Livre exigir verificação, a importação só continua com uma autorização válida ou com o HTML capturado no seu navegador.
-
-Para capturar a página usando uma sessão já autenticada no Safari, baixe `nexo-mercadolivre-safari.zip`, abra o projeto do Xcode incluído, execute o esquema **Nexo Commerce Connector** em **My Mac** e habilite a extensão em **Safari > Ajustes > Extensões**. O guia completo está em `safari_extension/INSTALAR-NO-SAFARI.md`.
-
-Ao publicar, o produto fica salvo no SQLite. Dados importados como preço, estoque e avaliações refletem o momento da importação; você pode editar preço e estoque na sua página ou importar novamente. A integração de pedidos e pagamentos ainda não está disponível. No modo de servidor, as telas de pedidos e configurações não mostram dados fictícios; os gráficos de faturamento pertencem somente ao modo de demonstração local.
+Na Central de Integrações, configure o aplicativo da sua conta e use **Autorizar conta**. Para novas conexões, cadastre `https://seu-dominio/api/integrations/mercadolivre/callback`; a configuração legada via ambiente permanece restrita ao administrador original. Links `/p/MLB...` precisam identificar uma publicação selecionada e pertencente ao catálogo; o sistema não escolhe vendedor ou anúncio arbitrariamente. A API fornece apenas os campos permitidos. Não são buscados HTML/DOM do Mercado Livre, e imagens não são copiadas sem autorização. Sem acesso, use dados próprios e registre os direitos de publicação.
+Ao publicar, o produto fica salvo no SQLite. Dados importados como preço, estoque e avaliações refletem o momento da importação; você pode editar preço e estoque na sua página ou importar novamente. A integração de pagamentos Pix fica disponível quando as três variáveis `PIXZY_*` estão configuradas. No modo de servidor, as telas de pedidos e configurações não mostram dados fictícios; os gráficos de faturamento pertencem somente ao modo de demonstração local.
 
 ## Tráfego em tempo real
 
@@ -59,7 +75,7 @@ flutter pub get
 python3 scripts/run_local.py
 ```
 
-Para o Mercado Livre, copie `.env.example` para `.env`, configure `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ML_REDIRECT_URI` e reinicie o processo local. O inicializador carrega esse arquivo sem sobrescrever variáveis já definidas no terminal. Depois, clique em **Conectar conta do Mercado Livre** no painel; a API oficial exige um token. A URI de retorno precisa usar HTTPS e ser exatamente a mesma cadastrada no aplicativo do Mercado Livre, portanto o fluxo OAuth normalmente deve ser concluído pelo domínio publicado, não por `127.0.0.1`. No primeiro início local, o script instala o Chromium de captura em `.local/browsers`. O conteúdo importado é um rascunho para sua própria página; copiar o HTML bruto de uma loja não preserva seus scripts, autenticação ou recursos externos.
+Para o Mercado Livre, copie `.env.example` para `.env`, configure `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ML_REDIRECT_URI` e reinicie o processo local. O inicializador carrega esse arquivo sem sobrescrever variáveis já definidas no terminal. Depois, clique em **Conectar conta do Mercado Livre** no painel; a API oficial exige um token. A URI de retorno precisa usar HTTPS e ser exatamente a mesma cadastrada no aplicativo do Mercado Livre, portanto o fluxo OAuth normalmente deve ser concluído pelo domínio publicado, não por `127.0.0.1`. Navegadores são necessários apenas para testes E2E do nosso site e são instalados separadamente. O conteúdo importado é um rascunho para sua própria página; copiar o HTML bruto de uma loja não preserva seus scripts, autenticação ou recursos externos.
 
 ## Validar
 
