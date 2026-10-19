@@ -10,11 +10,23 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from app import NexoServer, TrafficStore
+from app import NexoServer, TrafficStore, admin_password
 from page_import import ImportErrorMessage
 from payments import PixzyConfig
 
 PUBLISHED_PAGE = '/p/mlb1234567'
+
+
+class AdminPasswordTest(unittest.TestCase):
+    def test_generated_password_is_persistent_private_and_not_logged(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True), patch('builtins.print') as output:
+            root = Path(directory)
+            generated = admin_password(root)
+            self.assertEqual(admin_password(root), generated)
+            self.assertEqual((root / 'admin_password').stat().st_mode & 0o777, 0o600)
+            self.assertNotIn(generated, str(output.call_args_list))
+            with patch.dict(os.environ, {'NEXO_ADMIN_PASSWORD': 'replacement-fixture'}):
+                self.assertEqual(admin_password(root), 'replacement-fixture')
 
 
 class FakeGeo:
@@ -89,10 +101,7 @@ class NexoHttpTest(unittest.TestCase):
         web.mkdir()
         (web / 'index.html').write_text('<html>Nexo</html>')
         (web / 'login.html').write_text(
-            '<form method="post" action="/login" autocomplete="on">'
-            '<input name="username" autocomplete="username">'
-            '<input name="password" autocomplete="current-password">'
-            '</form>'
+            (Path(__file__).resolve().parents[1] / 'web' / 'login.html').read_text()
         )
         self.server = NexoServer(('127.0.0.1', 0), web, root / 'data', 'secret', geo_locator=FakeGeo())
         self.server.store.save_product({'id': 'MLB1234567', 'slug': 'mlb1234567', 'name': 'Teste', 'rightsConfirmed': True})
@@ -359,6 +368,53 @@ class NexoHttpTest(unittest.TestCase):
             self.assertIn('HttpOnly', cookie)
         finally:
             connection.close()
+
+    def test_native_login_failure_renders_form_and_escapes_username(self):
+        username = '\"><script>alert(1)</script>'
+        body = urllib.parse.urlencode({'username': username, 'password': 'private-wrong-password'}).encode()
+        with self.assertRaises(urllib.error.HTTPError) as failure:
+            self.request('/login', body, {'Content-Type': 'application/x-www-form-urlencoded'})
+        response = failure.exception
+        self.assertEqual(response.code, 401)
+        self.assertIn('text/html', response.headers['Content-Type'])
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.assertIsNone(response.headers.get('Set-Cookie'))
+        page = response.read().decode()
+        self.assertIn('action="/login"', page)
+        self.assertIn('Usuário ou senha incorretos.', page)
+        self.assertIn('role="alert"', page)
+        self.assertIn('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;', page)
+        self.assertNotIn(username, page)
+        self.assertNotIn('private-wrong-password', page)
+
+    def test_native_login_rate_limit_renders_distinct_message(self):
+        body = urllib.parse.urlencode({'username': 'admin', 'password': 'wrong'}).encode()
+        with patch('app.NexoHandler.allow_rate', return_value=False):
+            with self.assertRaises(urllib.error.HTTPError) as failure:
+                self.request('/login', body, {'Content-Type': 'application/x-www-form-urlencoded'})
+        response = failure.exception
+        self.assertEqual(response.code, 429)
+        self.assertEqual(response.headers['Retry-After'], '60')
+        page = response.read().decode()
+        self.assertIn('Aguarde um minuto', page)
+        self.assertIn('action="/login"', page)
+
+    def test_login_error_is_rendered_without_javascript(self):
+        with self.request('/?login_error=1') as response:
+            page = response.read().decode()
+        self.assertIn('id="login-error" class="error" role="alert"', page)
+        self.assertIn('Usuário ou senha incorretos.', page)
+        with self.request('/login') as response:
+            initial = response.read().decode()
+        self.assertNotIn('id="login-error"', initial)
+        self.assertNotIn('__NEXO_LOGIN_USERNAME__', initial)
+
+    def test_admin_login_accepts_unicode_credentials(self):
+        self.server.admin_user = 'administração'
+        self.server.admin_password = 'senha-com-acentuação'
+        body = json.dumps({'username': self.server.admin_user, 'password': self.server.admin_password}).encode()
+        with self.request('/api/auth/login', body, {'Content-Type': 'application/json'}) as response:
+            self.assertTrue(json.load(response)['authenticated'])
 
     def test_admin_session_survives_server_restart_and_rejects_tampering(self):
         token = self.server.create_admin_session()

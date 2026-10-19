@@ -776,9 +776,9 @@ class NexoServer(ThreadingHTTPServer):
             self.revoked_admin_sessions[token] = expiry
 
     def valid_admin_login(self, username: str, password: str) -> bool:
-        if not hmac.compare_digest(username, self.admin_user):
+        if not hmac.compare_digest(username.encode('utf-8'), self.admin_user.encode('utf-8')):
             return False
-        configured = hmac.compare_digest(password, self.admin_password)
+        configured = hmac.compare_digest(password.encode('utf-8'), self.admin_password.encode('utf-8'))
         return configured
 
     def create_ml_oauth_state(self) -> str:
@@ -1206,7 +1206,8 @@ class NexoHandler(BaseHTTPRequestHandler):
                 return self.send_error(HTTPStatus.NOT_FOUND)
             return self.serve_file(self.server.media_root / name)
         if path in ('/', '/index.html', '/login') and not self.authorized():
-            return self.serve_file(self.server.web_root / 'login.html')
+            error = 'invalid' if 'login_error' in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query) else ''
+            return self.serve_login(error=error)
         if path == '/login':
             return self.redirect('/')
         if path == '/admin/import':
@@ -1227,17 +1228,35 @@ class NexoHandler(BaseHTTPRequestHandler):
             return self.send_error(HTTPStatus.NOT_FOUND)
         return self.serve_file(asset)
 
-    def send_html(self, content, media_hosts=None):
+    def serve_login(self, error='', username='', status=HTTPStatus.OK):
+        messages = {
+            'invalid': 'Usuário ou senha incorretos. Confira os dados salvos e tente novamente.',
+            'rate_limit': 'Muitas tentativas de acesso. Aguarde um minuto antes de tentar novamente.',
+        }
+        message = messages.get(error)
+        feedback = (
+            '<div id="login-error" class="error" role="alert" tabindex="-1">'
+            + html.escape(message) + '</div>'
+        ) if message else ''
+        template = (self.server.web_root / 'login.html').read_text(encoding='utf-8')
+        content = template.replace('<!--LOGIN_FEEDBACK-->', feedback).replace(
+            '__NEXO_LOGIN_USERNAME__', html.escape(username[:80], quote=True),
+        )
+        return self.send_html(content, status=status)
+
+    def send_html(self, content, media_hosts=None, status=HTTPStatus.OK):
         from universal_import import validate_host
         origins = ' '.join('https://' + validate_host(host) for host in (media_hosts or []))
         nonce = secrets.token_urlsafe(24)
         data = content.replace('<script>', f'<script nonce="{nonce}">').encode('utf-8')
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
+        if status == HTTPStatus.TOO_MANY_REQUESTS:
+            self.send_header('Retry-After', '60')
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Referrer-Policy', 'same-origin')
         self.send_header('Content-Security-Policy', f"default-src 'self'; img-src 'self' https://*.mlstatic.com {origins}; frame-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
         self.end_headers()
         self.wfile.write(data)
@@ -1299,11 +1318,13 @@ class NexoHandler(BaseHTTPRequestHandler):
                 return self.send_error(HTTPStatus.BAD_REQUEST)
             username = (form.get('username') or [''])[0]
             password = (form.get('password') or [''])[0]
-            if len(username) > 80 or len(password) > 256 or not self.allow_rate('login:' + self.client_ip(), 20):
-                return self.redirect('/?login_error=1')
+            if not self.allow_rate('login:' + self.client_ip(), 20):
+                return self.serve_login('rate_limit', username, HTTPStatus.TOO_MANY_REQUESTS)
+            if len(username) > 80 or len(password) > 256:
+                return self.serve_login('invalid', username, HTTPStatus.UNAUTHORIZED)
             token = self.server.create_admin_session() if self.server.valid_admin_login(username, password) else self.server.connections.login(username, password)
             if not token:
-                return self.send_json_error('Usuário ou senha incorretos.', HTTPStatus.UNAUTHORIZED)
+                return self.serve_login('invalid', username, HTTPStatus.UNAUTHORIZED)
             secure = '; Secure' if self.forwarded_proto() == 'https' else ''
             self.send_response(HTTPStatus.SEE_OTHER)
             self.send_header('Location', '/')
@@ -1819,7 +1840,7 @@ def admin_password(data_root: Path) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(password)
     path.chmod(0o600)
-    print(f"Nexo admin user: {os.environ.get('NEXO_ADMIN_USER', 'admin')}\nNexo admin password: {password}", flush=True)
+    print('Nexo admin password generated and saved in the private data volume. Configure NEXO_ADMIN_PASSWORD to replace it.', flush=True)
     return password
 
 

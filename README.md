@@ -12,7 +12,15 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-O Caddy configura HTTPS automaticamente para o domínio informado. Acesse `https://seu-dominio/` para abrir o painel. O usuário padrão é `admin`. Se `NEXO_ADMIN_PASSWORD` ficar vazio, uma senha forte é criada na primeira inicialização e aparece em `docker compose logs app`; ela também fica guardada no volume em `/data/admin_password`.
+O Caddy configura HTTPS automaticamente para o domínio informado. Acesse `https://seu-dominio/` para abrir o painel. O usuário padrão é `admin`, salvo alteração em `NEXO_ADMIN_USER`. A senha de produção é definida em `NEXO_ADMIN_PASSWORD`; `local-dev` é exclusivo do desenvolvimento local. Se a variável ficar vazia, uma senha forte é criada na primeira inicialização e fica guardada no volume privado em `/data/admin_password`, sem ser exibida nos logs.
+
+### Recuperar o acesso administrativo
+
+No Render, abra o serviço → **Environment** e confira `NEXO_ADMIN_USER` (o manifesto define `admin`). Se não souber a senha, substitua `NEXO_ADMIN_PASSWORD` por uma nova senha forte no próprio painel e aplique a alteração com um novo deploy. Atualize também a entrada do gerenciador de senhas do navegador para o domínio de produção. Não compartilhe a senha no chat, em commits ou logs.
+
+No Docker Compose, atualize `NEXO_ADMIN_PASSWORD` no `.env` privado do servidor e execute `docker compose up -d --force-recreate app`. A variável tem prioridade sobre a senha gerada no volume. Essa configuração altera apenas a conta administrativa global; contas de organizações têm credenciais próprias.
+
+Falhas no formulário mantêm a tela de login com uma mensagem acessível, usuário preservado e senha sem valor preenchido na resposta. Credenciais inválidas retornam HTTP 401; excesso de tentativas retorna HTTP 429 com orientação para aguardar um minuto. A API continua retornando erros JSON. Não há recuperação automática de senha por e-mail implementada.
 
 Para testar somente na máquina local, use `SITE_DOMAIN=:80` no `.env` e acesse `http://localhost/`.
 
@@ -83,5 +91,6 @@ Para o Mercado Livre, copie `.env.example` para `.env`, configure `ML_CLIENT_ID`
 flutter analyze
 flutter test
 python3 -m unittest discover -s server -p 'test_*.py'
+python3 -m unittest discover -s server -p 'e2e_login.py'
 flutter build web --release --dart-define=NEXO_SELF_HOSTED=true
 ```

@@ -37,7 +37,9 @@
     input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(114,229,155,.08); }
     input::placeholder { color:#718096; }
     .reveal { position:absolute; right:6px; top:6px; width:40px; height:40px; border:0; border-radius:9px; color:var(--muted); background:transparent; cursor:pointer; font-size:17px; }
-    .error { display:none; margin-top:16px; padding:12px 13px; color:var(--red); background:rgba(255,120,133,.1); border:1px solid rgba(255,120,133,.28); border-radius:12px; }
+    .error { margin-top:16px; padding:12px 13px; color:var(--red); background:rgba(255,120,133,.1); border:1px solid rgba(255,120,133,.28); border-radius:12px; }
+    .error:focus { outline:2px solid var(--red); outline-offset:3px; }
+    .help { color:var(--muted); font-size:12px; }
     .submit { width:100%; height:52px; margin-top:26px; border:0; border-radius:14px; color:var(--ink); background:var(--green); font:800 14px Inter,ui-sans-serif,system-ui,sans-serif; cursor:pointer; }
     .submit:hover { filter:brightness(1.04); }
     .secure { margin:22px 0 0; text-align:center; color:var(--muted); font-size:12px; }
@@ -63,22 +65,25 @@
         <span class="eyebrow">PAINEL ADMINISTRATIVO</span>
         <h2>Bem-vindo de volta</h2>
         <p class="intro">Entre para acompanhar sua operação e gerenciar seus produtos.</p>
+        <!--LOGIN_FEEDBACK-->
         <label for="username">Usuário</label>
-        <input id="username" name="username" type="text" autocomplete="username" placeholder="Digite seu usuário" required autofocus>
+        <input id="username" name="username" type="text" autocomplete="username" placeholder="Digite seu usuário" maxlength="80" value="__NEXO_LOGIN_USERNAME__" required autofocus>
         <label for="password">Senha</label>
-        <div class="field"><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required><button class="reveal" type="button" aria-label="Mostrar senha" title="Mostrar senha">◉</button></div>
-        <div class="error" role="alert">Usuário ou senha incorretos.</div>
+        <div class="field"><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" maxlength="256" required><button class="reveal" type="button" aria-label="Mostrar senha" title="Mostrar senha">◉</button></div>
         <button class="submit" type="submit">Entrar no painel →</button>
+        <p class="help">Problemas para entrar? Confira o usuário salvo e a tecla Caps Lock. Se precisar redefinir sua senha, entre em contato com o administrador da sua organização.</p>
         <p class="secure">◇ Acesso protegido e seguro</p>
       </form>
     </section>
   </main>
   <script>
-    if (new URLSearchParams(location.search).has('login_error')) document.querySelector('.error').style.display = 'block';
+    const error = document.querySelector('#login-error');
+    if (error) error.focus();
     document.querySelector('.reveal').addEventListener('click', (event) => {
       const field = document.querySelector('#password');
       field.type = field.type === 'password' ? 'text' : 'password';
       event.currentTarget.setAttribute('aria-label', field.type === 'password' ? 'Mostrar senha' : 'Ocultar senha');
+      event.currentTarget.setAttribute('title', field.type === 'password' ? 'Mostrar senha' : 'Ocultar senha');
     });
   </script>
 </body>
